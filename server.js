@@ -48,7 +48,10 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://health-frontend-cav3.vercel.app',
+  'https://health-frontend-cav3.vercel.app',
   'https://health-frontend-cav3.vercel.app/*',
+  'https://*.vercel.app',  // Allow all Vercel preview deployments
+  'https://health-backend-2-gqv6.onrender.com',
   process.env.CLIENT_URL
 ].filter(Boolean);
 
