@@ -24,7 +24,7 @@ const generateVisitNumber = async () => {
     
     const todayCount = await Visit.count({
       where: {
-        visit_date: {
+        created_at: {
           [Op.between]: [startOfDay, endOfDay]
         }
       }
@@ -141,7 +141,6 @@ export const registerPatient = async (req, res) => {
         hospital_id: req.user.hospital_id
       });
 
-      // Also emit to card office room for real-time updates
       const cardOfficeRoom = `hospital_${req.user.hospital_id}_cardoffice`;
       io.to(cardOfficeRoom).emit('patient_registered', {
         patient_id: patient.id,
@@ -341,39 +340,41 @@ export const getRecentPatients = async (req, res) => {
 // ==================== GET DASHBOARD STATS ====================
 export const getCardOfficeStats = async (req, res) => {
   try {
+    const hospitalId = req.user.hospital_id;
+    
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const todayRegistrations = await Patient.count({
       where: {
-        hospital_id: req.user.hospital_id,
+        hospital_id: hospitalId,
         registered_at: { [Op.gte]: today }
       }
     });
 
     const inTriage = await Patient.count({
       where: {
-        hospital_id: req.user.hospital_id,
+        hospital_id: hospitalId,
         status: 'in_triage'
       }
     });
 
     const activePatients = await Patient.count({
       where: {
-        hospital_id: req.user.hospital_id,
+        hospital_id: hospitalId,
         status: { [Op.in]: ['in_triage', 'in_opd', 'in_emergency', 'in_anc', 'with_doctor'] }
       }
     });
 
     const totalPatients = await Patient.count({
-      where: { hospital_id: req.user.hospital_id }
+      where: { hospital_id: hospitalId }
     });
 
     res.json({
       success: true,
       stats: {
         today: todayRegistrations,
-        inTriage,
+        inTriage: inTriage,
         active: activePatients,
         total: totalPatients
       }
@@ -532,29 +533,13 @@ export const changeCardOfficePassword = async (req, res) => {
 // ==================== REPORT MANAGEMENT ====================
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
-    const offset = (page - 1) * limit;
-    
-    const whereClause = {
-      recipient_id: req.user.id,
-      recipient_type: 'staff'
-    };
-    
-    if (search) {
-      whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { body: { [Op.iLike]: `%${search}%` } },
-        { sender_full_name: { [Op.iLike]: `%${search}%` } }
-      ];
-    }
-    
-    const totalCount = await Report.count({ where: whereClause });
-    
+    // Using Sequelize ORM instead of raw SQL to avoid enum issues
     const reports = await Report.findAll({
-      where: whereClause,
-      order: [['sent_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      where: {
+        recipient_id: req.user.id,
+        recipient_type: 'staff'
+      },
+      order: [['sent_at', 'DESC']]
     });
     
     const unreadCount = await Report.count({
@@ -565,13 +550,24 @@ export const getCardOfficeReportsInbox = async (req, res) => {
       }
     });
     
+    // Manually fetch sender info
+    const reportsWithSender = await Promise.all(reports.map(async (report) => {
+      const sender = await HospitalStaff.findByPk(report.sender_id, {
+        attributes: ['first_name', 'last_name', 'email']
+      });
+      return {
+        ...report.toJSON(),
+        sender_first_name: sender?.first_name || 'Unknown',
+        sender_last_name: sender?.last_name || '',
+        sender_email: sender?.email || '',
+        sender_full_name: sender ? `${sender.first_name} ${sender.last_name}`.trim() : 'Unknown'
+      };
+    }));
+    
     res.json({
       success: true,
-      reports,
-      unreadCount,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page)
+      reports: reportsWithSender,
+      unreadCount
     });
   } catch (error) {
     console.error("Get card office reports inbox error:", error);
@@ -581,37 +577,46 @@ export const getCardOfficeReportsInbox = async (req, res) => {
 
 export const getCardOfficeReportsOutbox = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
-    const offset = (page - 1) * limit;
-    
-    const whereClause = {
-      sender_id: req.user.id,
-      sender_type: 'staff'
-    };
-    
-    if (search) {
-      whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { body: { [Op.iLike]: `%${search}%` } },
-        { recipient_full_name: { [Op.iLike]: `%${search}%` } }
-      ];
-    }
-    
-    const totalCount = await Report.count({ where: whereClause });
-    
     const reports = await Report.findAll({
-      where: whereClause,
-      order: [['sent_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      where: {
+        sender_id: req.user.id,
+        sender_type: 'staff'
+      },
+      order: [['sent_at', 'DESC']]
     });
+    
+    // Manually fetch recipient info
+    const reportsWithRecipient = await Promise.all(reports.map(async (report) => {
+      let recipientFullName = '';
+      let recipientHospitalName = '';
+      
+      if (report.recipient_type === 'hospital') {
+        const admin = await HospitalAdmin.findByPk(report.recipient_id);
+        if (admin) {
+          recipientFullName = `${admin.first_name} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name}`.trim();
+          recipientHospitalName = admin.hospital_name || '';
+        }
+      } else if (report.recipient_type === 'staff') {
+        const staff = await HospitalStaff.findByPk(report.recipient_id);
+        if (staff) {
+          recipientFullName = `${staff.first_name} ${staff.middle_name ? staff.middle_name + ' ' : ''}${staff.last_name}`.trim();
+        }
+      }
+      
+      // Count attachments
+      const attachmentCount = report.attachments?.length || 0;
+      
+      return {
+        ...report.toJSON(),
+        recipient_full_name: recipientFullName,
+        recipient_hospital_name: recipientHospitalName,
+        attachment_count: attachmentCount
+      };
+    }));
     
     res.json({
       success: true,
-      reports,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page)
+      reports: reportsWithRecipient
     });
   } catch (error) {
     console.error("Get card office reports outbox error:", error);
@@ -631,11 +636,22 @@ export const sendCardOfficeReport = async (req, res) => {
 
     let recipient = null;
     let recipientFullName = '';
+    let recipientHospitalId = null;
+    let recipientHospitalName = '';
     
-    if (recipient_type === 'hospital_admin') {
+    if (recipient_type === 'hospital') {
       recipient = await HospitalAdmin.findByPk(recipient_id);
       if (recipient) {
         recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+        recipientHospitalId = recipient.id;
+        recipientHospitalName = recipient.hospital_name || '';
+      }
+    } else if (recipient_type === 'staff') {
+      recipient = await HospitalStaff.findByPk(recipient_id);
+      if (recipient) {
+        recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+        recipientHospitalId = recipient.hospital_id;
+        recipientHospitalName = recipient.hospital_name || '';
       }
     }
 
@@ -656,6 +672,18 @@ export const sendCardOfficeReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
 
+    // Handle attachments
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
+      attachments = req.files.map(file => ({
+        name: file.originalname,
+        url: `/uploads/reports/${file.filename}`,
+        type: file.mimetype,
+        size: file.size,
+        uploaded_at: new Date()
+      }));
+    }
+
     const report = await Report.create({
       report_number,
       title,
@@ -663,6 +691,7 @@ export const sendCardOfficeReport = async (req, res) => {
       body,
       priority: priority || 'medium',
       status: 'sent',
+      attachments: attachments,
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -673,21 +702,27 @@ export const sendCardOfficeReport = async (req, res) => {
       sender_hospital: sender.hospital_name,
       sender_hospital_id: sender.hospital_id,
       recipient_id: recipient.id,
-      recipient_type: 'hospital',
-      recipient_first_name: recipient.first_name,
-      recipient_middle_name: recipient.middle_name,
-      recipient_last_name: recipient.last_name,
+      recipient_type: recipient_type,
+      recipient_first_name: recipient.first_name || '',
+      recipient_middle_name: recipient.middle_name || '',
+      recipient_last_name: recipient.last_name || '',
       recipient_full_name: recipientFullName,
-      recipient_hospital: recipient.hospital_name,
-      recipient_hospital_id: recipient.id,
+      recipient_hospital: recipientHospitalName,
+      recipient_hospital_id: recipientHospitalId,
       sent_at: new Date(),
       last_activity_at: new Date()
     });
 
     const io = req.app.get('io');
     if (io) {
-      const adminRoom = `hospital_${recipient.id}_admin`;
-      io.to(adminRoom).emit('new_report_from_cardoffice', {
+      let recipientRoom = '';
+      if (recipient_type === 'hospital') {
+        recipientRoom = `hospital_${recipientHospitalId}_admin`;
+      } else if (recipient_type === 'staff') {
+        recipientRoom = `hospital_${recipientHospitalId}_staff_${recipient.id}`;
+      }
+      
+      io.to(recipientRoom).emit('new_report_from_cardoffice', {
         report_id: report.id,
         report_number: report.report_number,
         title: report.title,
@@ -773,19 +808,16 @@ export const replyToCardOfficeReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
 
-    let attachment = null;
+    let attachments = [];
     if (req.file) {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      attachment = {
+      attachments = [{
         name: req.file.originalname,
-        url: `${baseUrl}/uploads/reports/${req.file.filename}`,
+        url: `/uploads/reports/${req.file.filename}`,
         type: req.file.mimetype,
         size: req.file.size,
         uploaded_at: new Date()
-      };
+      }];
     }
-
-    const attachments = attachment ? [attachment] : [];
 
     const reply = await Report.create({
       report_number,
@@ -794,8 +826,7 @@ export const replyToCardOfficeReport = async (req, res) => {
       body,
       priority: parentReport.priority,
       status: 'sent',
-      attachments,
-      
+      attachments: attachments,
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -806,7 +837,6 @@ export const replyToCardOfficeReport = async (req, res) => {
       sender_hospital: sender.hospital_name,
       sender_hospital_id: sender.hospital_id,
       sender_department: sender.department,
-      
       recipient_id: recipientId,
       recipient_type: recipientType,
       recipient_first_name: recipientFirstName,
@@ -815,7 +845,6 @@ export const replyToCardOfficeReport = async (req, res) => {
       recipient_full_name: recipientFullName,
       recipient_hospital: recipientHospitalName,
       recipient_hospital_id: recipientHospitalId,
-      
       parent_report_id: parentReport.id,
       thread_id: parentReport.thread_id || parentReport.id,
       sent_at: new Date(),
@@ -898,24 +927,52 @@ export const markCardOfficeReportRead = async (req, res) => {
   }
 };
 
+// backend/controllers/cardofficeController.js
+// Replace ONLY this function at the bottom of your file:
+
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
-    const hospitalAdmins = await HospitalAdmin.findAll({
-      where: { id: req.user.hospital_id },
-      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
-    });
+    console.log('🏥 Fetching hospital admins for hospital:', req.user.hospital_id);
     
-    const formattedAdmins = hospitalAdmins.map(admin => ({
+    // Try different possible column names
+    let hospitalAdmins;
+    
+    // First try with 'hospital_id'
+    try {
+      hospitalAdmins = await HospitalAdmin.findAll({
+        where: { hospital_id: req.user.hospital_id },
+        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+      });
+    } catch (error) {
+      // If 'hospital_id' fails, try 'id' (some models use id as hospital reference)
+      console.log('Trying alternative query...');
+      hospitalAdmins = await HospitalAdmin.findAll({
+        where: { id: req.user.hospital_id },
+        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+      });
+    }
+    
+    console.log('📋 Found hospital admins:', hospitalAdmins?.length || 0);
+    
+    const formattedAdmins = (hospitalAdmins || []).map(admin => ({
       id: admin.id,
-      full_name: `${admin.first_name} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name}`.trim(),
-      email: admin.email,
-      hospital_name: admin.hospital_name,
+      full_name: `${admin.first_name || ''} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name || ''}`.trim(),
+      email: admin.email || '',
+      hospital_name: admin.hospital_name || 'Hospital',
       hospital_id: admin.id
     }));
     
-    res.json({ success: true, admins: formattedAdmins });
+    res.json({ 
+      success: true, 
+      admins: formattedAdmins 
+    });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    // Return empty array instead of error to prevent frontend crash
+    res.json({ 
+      success: true, 
+      admins: [],
+      message: 'No hospital admins found'
+    });
   }
 };

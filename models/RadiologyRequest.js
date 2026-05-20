@@ -1,3 +1,4 @@
+// models/RadiologyRequest.js
 import { DataTypes } from "sequelize";
 import sequelize from "../config/database.js";
 
@@ -14,11 +15,7 @@ const RadiologyRequest = sequelize.define("RadiologyRequest", {
   },
   patient_id: {
     type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: "patients",
-      key: "id"
-    }
+    allowNull: false
   },
   patient_name: {
     type: DataTypes.STRING,
@@ -26,28 +23,20 @@ const RadiologyRequest = sequelize.define("RadiologyRequest", {
   },
   doctor_id: {
     type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: "hospital_staff",
-      key: "id"
-    }
+    allowNull: false
   },
   doctor_name: {
     type: DataTypes.STRING,
     allowNull: false
   },
   ward: {
-    type: DataTypes.ENUM("OPD", "EME", "ANC", "IPD"),
-     allowNull: true,  // ✅ CHANGE TO TRUE FIRST
-    defaultValue: "OPD" 
+    type: DataTypes.STRING,  // Use STRING instead of ENUM
+    allowNull: true,
+    defaultValue: "OPD"
   },
   hospital_id: {
     type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: "hospital_admins",
-      key: "id"
-    }
+    allowNull: false
   },
   exam_type: {
     type: DataTypes.STRING,
@@ -58,11 +47,11 @@ const RadiologyRequest = sequelize.define("RadiologyRequest", {
     allowNull: false
   },
   priority: {
-    type: DataTypes.ENUM("routine", "urgent", "stat"),
+    type: DataTypes.STRING,  // Use STRING instead of ENUM
     defaultValue: "routine"
   },
   status: {
-    type: DataTypes.ENUM("pending", "in_progress", "completed", "cancelled"),
+    type: DataTypes.STRING,  // Use STRING instead of ENUM
     defaultValue: "pending"
   },
   clinical_notes: {
@@ -78,7 +67,11 @@ const RadiologyRequest = sequelize.define("RadiologyRequest", {
     allowNull: true
   },
   report_id: {
-    type: DataTypes.STRING,
+    type: DataTypes.STRING,  // ✅ Keep as STRING to avoid migration issues
+    allowNull: true
+  },
+  report_submitted_at: {
+    type: DataTypes.DATE,
     allowNull: true
   },
   completed_at: {
@@ -89,10 +82,5 @@ const RadiologyRequest = sequelize.define("RadiologyRequest", {
   tableName: "radiology_requests",
   timestamps: true
 });
-RadiologyRequest.associate = (models) => {
-  RadiologyRequest.hasOne(models.RadiologyReport, {
-    foreignKey: 'request_id',
-    as: 'report'
-  });
-};
+
 export default RadiologyRequest;

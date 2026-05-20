@@ -464,6 +464,8 @@ export const savePrescriptions = async (req, res) => {
 // @desc    Get lab results for patient
 // @route   GET /api/doctor/lab-results/:patientId
 // @access  Private
+// Replace the getLabResults function in doctorController.js
+
 export const getLabResults = async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -475,6 +477,7 @@ export const getLabResults = async (req, res) => {
       return res.json({
         success: true,
         patient_id: patientId,
+        hasResults: false,
         summary: { total_requests: 0, completed_count: 0, pending_count: 0 },
         completed: [],
         pending: []
@@ -483,7 +486,7 @@ export const getLabResults = async (req, res) => {
 
     const whereClause = { 
       patient_id: patientId,
-      hospital_id: hospital_id
+      hospital_id: parseInt(hospital_id)
     };
     
     if (doctor_id) {
@@ -492,40 +495,67 @@ export const getLabResults = async (req, res) => {
 
     const labRequests = await LabRequest.findAll({
       where: whereClause,
-      include: [{
-        model: LabResult,
-        as: 'result',
-        required: false
-      }],
       order: [['createdAt', 'DESC']]
     });
 
-    const completed = labRequests.filter(req => req.status === 'completed' && req.result);
-    const pending = labRequests.filter(req => req.status !== 'completed' && req.status !== 'cancelled');
+    // Get all results separately
+    const requestIds = labRequests.map(req => req.id);
+    let results = [];
+    
+    if (requestIds.length > 0) {
+      results = await LabResult.findAll({
+        where: { request_id: { [Op.in]: requestIds } }
+      });
+    }
 
-    res.json({
-      success: true,
-      patient_id: patientId,
-      summary: {
-        total_requests: labRequests.length,
-        completed_count: completed.length,
-        pending_count: pending.length
-      },
-      completed: completed.map(req => ({
-        id: req.result.id,
+    const completed = labRequests.filter(req => {
+      const hasResult = results.some(r => r.request_id === req.id);
+      return req.status === 'completed' && hasResult;
+    });
+    
+    const pending = labRequests.filter(req => 
+      req.status !== 'completed' && req.status !== 'cancelled'
+    );
+
+    const completedWithResults = completed.map(req => {
+      const result = results.find(r => r.request_id === req.id);
+      let resultData = {};
+      
+      try {
+        if (result && result.result) {
+          resultData = typeof result.result === 'string' ? JSON.parse(result.result) : result.result;
+        }
+      } catch (e) {
+        resultData = { result: result?.result || 'Result available' };
+      }
+      
+      return {
+        id: result?.id || null,
         request_id: req.id,
         test_name: req.test_name,
         test_type: req.test_type,
         priority: req.priority,
         requested_at: req.requested_at,
         completed_at: req.completed_at,
-        result: req.result.result,
-        critical: req.result.critical,
-        normal_range: req.result.normal_range,
-        reported_at: req.result.reported_at,
-        reported_by: req.result.reported_by,
-        recommendations: req.result.recommendations
-      })),
+        result: resultData,
+        critical: result?.critical || false,
+        normal_range: null,
+        reported_at: result?.reported_at || req.completed_at,
+        reported_by: result?.reported_by || req.technician_name,
+        recommendations: result?.recommendations || ''
+      };
+    });
+
+    res.json({
+      success: true,
+      patient_id: patientId,
+      hasResults: completedWithResults.length > 0,
+      summary: {
+        total_requests: labRequests.length,
+        completed_count: completed.length,
+        pending_count: pending.length
+      },
+      completed: completedWithResults,
       pending: pending.map(req => ({
         request_id: req.id,
         test_name: req.test_name,
@@ -542,6 +572,7 @@ export const getLabResults = async (req, res) => {
     res.json({
       success: true,
       patient_id: req.params.patientId,
+      hasResults: false,
       summary: { total_requests: 0, completed_count: 0, pending_count: 0 },
       completed: [],
       pending: []
@@ -554,55 +585,98 @@ export const getLabResults = async (req, res) => {
 // @desc    Get radiology results for patient
 // @route   GET /api/doctor/radiology-results/:patientId
 // @access  Private
+// In doctorController.js - Replace the getRadiologyResults function
+
+// In doctorController.js - Replace the getRadiologyResults function
+// In doctorController.js - Replace the getRadiologyResults function
+
 export const getRadiologyResults = async (req, res) => {
   try {
     const { patientId } = req.params;
     const { doctor_id, hospital_id } = req.query;
     
-    console.log(`📷 Fetching radiology results for patient: ${patientId}`);
+    console.log(`📷 Fetching radiology results for patient: ${patientId}, hospital: ${hospital_id}`);
     
     let results = [];
     
     try {
-      const radiologyReports = await RadiologyReport.findAll({
-        where: { patient_id: patientId },
-        order: [['reported_at', 'DESC']]
+      // Find all radiology requests for this patient
+      const whereClause = { patient_id: patientId };
+      
+      if (hospital_id) {
+        whereClause.hospital_id = parseInt(hospital_id);
+      }
+      
+      if (doctor_id) {
+        whereClause.doctor_id = doctor_id;
+      }
+      
+      const radiologyRequests = await RadiologyRequest.findAll({
+        where: whereClause,
+        order: [['createdAt', 'DESC']]
       });
       
-      results = radiologyReports.map(report => {
-        const jsonReport = report.toJSON();
-        let images = jsonReport.images || [];
-        if (typeof images === 'string') {
-          try {
-            images = JSON.parse(images);
-          } catch (e) {
-            images = [];
-          }
-        }
+      console.log(`📋 Found ${radiologyRequests.length} radiology requests for patient ${patientId}`);
+      
+      if (radiologyRequests.length > 0) {
+        const requestIds = radiologyRequests.map(req => req.id);
         
-        return {
-          id: jsonReport.id,
-          request_id: jsonReport.request_id,
-          patient_id: jsonReport.patient_id,
-          patient_name: jsonReport.patient_name,
-          exam_type: jsonReport.exam_type,
-          body_part: jsonReport.body_part,
-          findings: jsonReport.findings,
-          impression: jsonReport.impression,
-          report: jsonReport.report,
-          status: jsonReport.status,
-          critical: jsonReport.critical || false,
-          reported_by: jsonReport.reported_by,
-          reported_at: jsonReport.reported_at,
-          images: images
-        };
-      });
+        // Find reports for these requests
+        const radiologyReports = await RadiologyReport.findAll({
+          where: { request_id: { [Op.in]: requestIds } }
+        });
+        
+        console.log(`📋 Found ${radiologyReports.length} radiology reports`);
+        
+        // Map results - IMPORTANT: Always use a unique key
+        results = radiologyRequests.map(req => {
+          const report = radiologyReports.find(r => r.request_id === req.id);
+          
+          // Parse images if they exist
+          let images = [];
+          if (report && report.images) {
+            try {
+              images = typeof report.images === 'string' ? JSON.parse(report.images) : report.images;
+            } catch (e) {
+              images = [];
+            }
+          }
+          
+          // ✅ FIX: Always use request_id as the unique identifier
+          return {
+            id: report ? report.id : null,
+            unique_key: `rad_${req.id}`,  // Add this for React keys
+            request_id: req.id,
+            request_number: req.request_number,
+            patient_id: req.patient_id,
+            patient_name: req.patient_name,
+            doctor_id: req.doctor_id,
+            doctor_name: req.doctor_name,
+            exam_type: req.exam_type,
+            body_part: req.body_part,
+            clinical_notes: req.clinical_notes,
+            findings: report?.findings || null,
+            impression: report?.impression || null,
+            recommendations: report?.recommendations || null,
+            status: report ? 'completed' : req.status,
+            critical: report?.critical || false,
+            reported_by: report?.radiologist_name || report?.reported_by || null,
+            reported_at: report?.submitted_at || report?.reported_at || null,
+            images: images,
+            images_count: images.length,
+            has_report: !!report,
+            requested_at: req.createdAt
+          };
+        });
+      }
       
-      console.log(`✅ Found ${results.length} radiology results`);
+      console.log(`✅ Returning ${results.length} radiology results`);
+      
     } catch (error) {
       console.error('Error fetching radiology results:', error);
     }
 
+    // Always return success with results array
     res.json({
       success: true,
       results: results || []
@@ -616,7 +690,72 @@ export const getRadiologyResults = async (req, res) => {
     });
   }
 };
+// Add this new function to doctorController.js
 
+// @desc    Get radiology report by request ID
+// @route   GET /api/doctor/radiology-report/:requestId
+// @access  Private
+export const getRadiologyReportByRequestId = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { hospital_id } = req.query;
+    
+    console.log(`📷 Fetching radiology report for request: ${requestId}`);
+    
+    const request = await RadiologyRequest.findByPk(requestId);
+    
+    if (!request) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Radiology request not found' 
+      });
+    }
+    
+    const report = await RadiologyReport.findOne({
+      where: { request_id: requestId }
+    });
+    
+    let images = [];
+    if (report && report.images) {
+      try {
+        images = typeof report.images === 'string' ? JSON.parse(report.images) : report.images;
+      } catch (e) {
+        images = [];
+      }
+    }
+    
+    res.json({
+      success: true,
+      request: {
+        id: request.id,
+        request_number: request.request_number,
+        exam_type: request.exam_type,
+        body_part: request.body_part,
+        clinical_notes: request.clinical_notes,
+        priority: request.priority,
+        status: request.status,
+        requested_at: request.createdAt
+      },
+      report: report ? {
+        id: report.id,
+        findings: report.findings,
+        impression: report.impression,
+        recommendations: report.recommendations,
+        critical: report.critical,
+        images: images,
+        reported_by: report.radiologist_name || report.reported_by,
+        reported_at: report.submitted_at || report.reported_at
+      } : null
+    });
+    
+  } catch (error) {
+    console.error('Error fetching radiology report:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+};
 // ==================== AVAILABLE BEDS ====================
 
 // @desc    Get available beds
@@ -1836,6 +1975,8 @@ export const getPatientPrescriptions = async (req, res) => {
 // @desc    Check lab results for specific patient
 // @route   GET /api/doctor/check-lab-results/:patientId
 // @access  Private
+// Replace the checkLabResults function
+
 export const checkLabResults = async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -1855,7 +1996,7 @@ export const checkLabResults = async (req, res) => {
 
     const whereClause = {
       patient_id: patientId,
-      hospital_id: hospital_id
+      hospital_id: parseInt(hospital_id)
     };
     
     if (doctor_id) {
@@ -1864,16 +2005,26 @@ export const checkLabResults = async (req, res) => {
 
     const labRequests = await LabRequest.findAll({
       where: whereClause,
-      include: [{
-        model: LabResult,
-        as: 'result',
-        required: false
-      }],
       order: [['createdAt', 'DESC']]
     });
 
-    const completedLabs = labRequests.filter(req => req.status === 'completed' && req.result);
-    const pendingLabs = labRequests.filter(req => req.status !== 'completed' && req.status !== 'cancelled');
+    const requestIds = labRequests.map(req => req.id);
+    let results = [];
+    
+    if (requestIds.length > 0) {
+      results = await LabResult.findAll({
+        where: { request_id: { [Op.in]: requestIds } }
+      });
+    }
+
+    const completedLabs = labRequests.filter(req => {
+      const hasResult = results.some(r => r.request_id === req.id);
+      return (req.status === 'completed' || req.status === 'completed') && hasResult;
+    });
+    
+    const pendingLabs = labRequests.filter(req => 
+      req.status !== 'completed' && req.status !== 'cancelled' && req.status !== 'completed'
+    );
 
     res.json({
       success: true,
@@ -1881,14 +2032,28 @@ export const checkLabResults = async (req, res) => {
       hasResults: completedLabs.length > 0,
       completedCount: completedLabs.length,
       pendingCount: pendingLabs.length,
-      results: completedLabs.map(req => ({
-        id: req.result.id,
-        request_id: req.id,
-        test_name: req.test_name,
-        result: req.result.result,
-        critical: req.result.critical,
-        reported_at: req.result.reported_at
-      })),
+      results: completedLabs.map(req => {
+        const result = results.find(r => r.request_id === req.id);
+        let resultData = {};
+        
+        try {
+          if (result && result.result) {
+            resultData = typeof result.result === 'string' ? JSON.parse(result.result) : result.result;
+          }
+        } catch (e) {
+          resultData = { result: result?.result || 'Result available' };
+        }
+        
+        return {
+          id: result?.id,
+          request_id: req.id,
+          test_name: req.test_name,
+          result: resultData,
+          critical: result?.critical || false,
+          reported_at: result?.reported_at,
+          has_result: !!result
+        };
+      }),
       pending: pendingLabs.map(req => ({
         request_id: req.id,
         test_name: req.test_name,

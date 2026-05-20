@@ -44,9 +44,16 @@ const RadiologyReport = sequelize.define("RadiologyReport", {
     type: DataTypes.STRING,
     allowNull: false
   },
-  // ✅ CHANGE THIS FROM JSON TO TEXT
-  report: {
-    type: DataTypes.TEXT,  // Changed from JSON to TEXT
+  radiologist_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true
+  },
+  radiologist_name: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  clinical_history: {
+    type: DataTypes.TEXT,
     allowNull: true
   },
   findings: {
@@ -57,13 +64,14 @@ const RadiologyReport = sequelize.define("RadiologyReport", {
     type: DataTypes.TEXT,
     allowNull: true
   },
-  images: {
-    type: DataTypes.JSONB,  // Keep this as JSON for image URLs
-    defaultValue: []
+  recommendations: {
+    type: DataTypes.TEXT,
+    allowNull: true
   },
+  // ❌ REMOVE images field completely
   status: {
-    type: DataTypes.ENUM("pending", "completed", "cancelled"),
-    defaultValue: "pending"
+    type: DataTypes.ENUM("pending", "submitted", "completed"),
+    defaultValue: "submitted"
   },
   critical: {
     type: DataTypes.BOOLEAN,
@@ -71,11 +79,15 @@ const RadiologyReport = sequelize.define("RadiologyReport", {
   },
   reported_by: {
     type: DataTypes.STRING,
-    allowNull: false
+    allowNull: true
   },
   reported_at: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    allowNull: true
+  },
+  submitted_at: {
+    type: DataTypes.DATE,
+    allowNull: true
   },
   processed_by: {
     type: DataTypes.INTEGER,

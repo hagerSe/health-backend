@@ -29,7 +29,10 @@ router.get('/in-progress', protect, restrictTo('radiology', 'radiologist', 'radi
 router.get('/completed', protect, restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin'), getCompletedRequests);
 router.put('/requests/:id/start', protect, restrictTo('radiology', 'radiologist', 'radio'), startExam);
 router.post('/upload/:id', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.array('images', 20), uploadImages);
-router.put('/report/:id', protect, restrictTo('radiology', 'radiologist', 'radio'), submitReport);
+
+// ✅ FIX: Add upload middleware to handle image uploads
+router.put('/report/:id', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.array('images', 20), submitReport);
+
 router.get('/report/:id', protect, restrictTo('radiology', 'radiologist', 'radio', 'doctor', 'nurse'), getReport);
 
 // ==================== PROFILE ROUTES ====================
@@ -45,4 +48,4 @@ router.post('/reports/send', protect, restrictTo('radiology', 'radiologist', 'ra
 router.post('/reports/:id/reply', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.single('attachment'), replyToRadiologyReport);
 router.put('/reports/:id/read', protect, restrictTo('radiology', 'radiologist', 'radio'), markRadiologyReportRead);
 
-export default router;
+export default router; 

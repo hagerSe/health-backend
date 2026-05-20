@@ -134,6 +134,8 @@ export const protect = async (req, res, next) => {
 };
 
 // Enhanced restrictTo that checks both userType and department
+// backend/middleware/auth.js - Update the restrictTo function
+
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -156,20 +158,22 @@ export const restrictTo = (...roles) => {
       const normalizedDept = rawDepartment.toLowerCase().replace(/\s+/g, '_');
       const userRole = (req.user.role || '').toLowerCase();
       
-      console.log('Checking department:', rawDepartment, 'role:', userRole);
+      console.log('🔐 Checking access for department:', rawDepartment, 'role:', userRole);
+      console.log('🔐 Required roles:', roles);
       
       const departmentMap = {
-        'doctor': ['doctor', 'opd_doctor', 'eme_doctor', 'physician', 'consultant'],
-        'opd_doctor': ['doctor', 'opd_doctor'],
-        'eme_doctor': ['doctor', 'eme_doctor'],
+        'doctor': ['doctor', 'opd_doctor', 'eme_doctor', 'physician', 'consultant', 
+                   'card_office', 'card_office_staff', 'cardofffice'],  // ← ADDED card_office
+        'opd_doctor': ['doctor', 'opd_doctor', 'card_office', 'card_office_staff', 'cardofffice'],
+        'eme_doctor': ['doctor', 'eme_doctor', 'card_office', 'card_office_staff', 'cardofffice'],
         'nurse': ['nurse', 'staff_nurse', 'anc_nurse', 'midwife'],
         'anc_nurse': ['nurse', 'anc_nurse', 'midwife'],
         'midwife': ['midwife', 'midwifery', 'anc_midwife', 'nurse_midwife', 'nurse'],
         'anc_midwife': ['midwife', 'anc_midwife', 'midwifery', 'nurse'],
         'triage': ['triage', 'triage_nurse'],
         'triage_nurse': ['triage', 'triage_nurse'],
-        'card_office': ['card_office', 'card_office_staff', 'cardofffice'],
-        'cardofffice': ['card_office', 'card_office_staff', 'cardofffice'],
+        'card_office': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],  // ← ADDED doctor
+        'cardofffice': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],   // ← ADDED doctor
         'lab': ['lab', 'lab_technician', 'lab_tech'],
         'lab_technician': ['lab', 'lab_technician'],
         'radiology': ['radiology', 'radiologist', 'radio'],
@@ -204,21 +208,25 @@ export const restrictTo = (...roles) => {
       }
 
       const allowedRoles = departmentMap[matchedDepartment] || [];
-      console.log('Matched department:', matchedDepartment);
-      console.log('Allowed roles:', allowedRoles);
+      console.log('📋 Matched department:', matchedDepartment);
+      console.log('📋 Allowed roles for this department:', allowedRoles);
       
       const hasPermission = roles.some(role => 
         allowedRoles.includes(role) || 
         allowedRoles.includes(role.toLowerCase()) ||
         role === 'staff' ||
         userRole === role ||
-        userRole.includes(role)
+        userRole.includes(role) ||
+        // Special case for card_office access from doctor
+        (roles.includes('card_office') && allowedRoles.includes('doctor'))
       );
       
       if (hasPermission) {
         console.log('✅ Permission granted for department:', rawDepartment);
         return next();
       }
+      
+      console.log('❌ Permission denied. Required:', roles, 'Allowed:', allowedRoles);
     }
 
     console.log('❌ Permission denied for user:', {
@@ -231,11 +239,10 @@ export const restrictTo = (...roles) => {
 
     return res.status(403).json({ 
       success: false, 
-      message: 'You do not have permission to access this resource' 
+      message: `You do not have permission to access this resource. Required: ${roles.join(', ')}` 
     });
   };
 };
-
 // Helper function to check specific ward access
 export const restrictToWard = (ward) => {
   return (req, res, next) => {

@@ -15,7 +15,7 @@ import { sendVerificationEmail, sendResetPasswordEmail } from "../utils/emailSer
 // ==================== DEVELOPMENT CONFIGURATION ====================
 const isDevelopment = process.env.NODE_ENV === 'development';
 
-// ==================== LOGIN FUNCTION - WORKS FOR ANY EMAIL ====================
+// ==================== LOGIN FUNCTION - WORKS FOR ALL TABLES (INCLUDING USER) ====================
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -38,70 +38,95 @@ export const login = async (req, res) => {
     let userType = null;
     let userModel = null;
 
-    // Check all admin types
-    user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
+    // ✅ 1. CHECK USER TABLE FIRST
+    user = await User.findOne({ where: { email: normalizedEmail } });
     if (user) {
-      role = 'Federal_Admin';
-      userType = 'federal';
-      userModel = 'FederalAdmin';
+      role = user.role || 'staff';
+      userType = user.role === 'staff' ? 'staff' : user.role;
+      userModel = 'User';
+      console.log("✅ User found in User table, role:", role);
     }
 
+    // ✅ 2. CHECK FEDERAL ADMIN
+    if (!user) {
+      user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
+      if (user) {
+        role = 'Federal_Admin';
+        userType = 'federal';
+        userModel = 'FederalAdmin';
+        console.log("✅ User found in FederalAdmin table");
+      }
+    }
+
+    // ✅ 3. CHECK REGIONAL ADMIN
     if (!user) {
       user = await RegionalAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Regional_Admin';
         userType = 'regional';
         userModel = 'RegionalAdmin';
+        console.log("✅ User found in RegionalAdmin table");
       }
     }
 
+    // ✅ 4. CHECK ZONE ADMIN
     if (!user) {
       user = await ZoneAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Zone_Admin';
         userType = 'zone';
         userModel = 'ZoneAdmin';
+        console.log("✅ User found in ZoneAdmin table");
       }
     }
 
+    // ✅ 5. CHECK WOREDA ADMIN
     if (!user) {
       user = await WoredaAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Woreda_Admin';
         userType = 'woreda';
         userModel = 'WoredaAdmin';
+        console.log("✅ User found in WoredaAdmin table");
       }
     }
 
+    // ✅ 6. CHECK KEBELE ADMIN
     if (!user) {
       user = await KebeleAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Kebele_Admin';
         userType = 'kebele';
         userModel = 'KebeleAdmin';
+        console.log("✅ User found in KebeleAdmin table");
       }
     }
 
+    // ✅ 7. CHECK HOSPITAL ADMIN
     if (!user) {
       user = await HospitalAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Hospital_Admin';
         userType = 'hospital';
         userModel = 'HospitalAdmin';
+        console.log("✅ User found in HospitalAdmin table");
       }
     }
 
+    // ✅ 8. CHECK HOSPITAL STAFF
     if (!user) {
       user = await HospitalStaff.findOne({ where: { email: normalizedEmail } });
       if (user) {
-        role = user.department;
+        role = user.department || 'staff';
         userType = 'staff';
         userModel = 'HospitalStaff';
+        console.log("✅ User found in HospitalStaff table, department:", role);
       }
     }
 
+    // ✅ IF NO USER FOUND IN ANY TABLE
     if (!user) {
-      console.log("❌ USER NOT FOUND");
+      console.log("❌ USER NOT FOUND in any table for email:", normalizedEmail);
       return res.status(401).json({ 
         success: false, 
         message: "Invalid email or password" 
@@ -110,13 +135,14 @@ export const login = async (req, res) => {
 
     // Check if user is active
     if (user.status && user.status === 'inactive') {
+      console.log("❌ Account is inactive for:", normalizedEmail);
       return res.status(401).json({
         success: false,
         message: "Account is deactivated. Contact your administrator."
       });
     }
 
-    // ✅ DEVELOPMENT MODE: Auto-verify ALL users (bypass email verification)
+    // ✅ DEVELOPMENT MODE: Auto-verify ALL users
     if (isDevelopment && !user.is_verified) {
       console.log(`✅ Auto-verifying user in development mode: ${normalizedEmail}`);
       user.is_verified = true;
@@ -130,7 +156,7 @@ export const login = async (req, res) => {
       console.log("❌ Email not verified:", normalizedEmail);
       return res.status(403).json({
         success: false,
-        message: "Please verify your email address. In development mode, please contact admin."
+        message: "Please verify your email address."
       });
     }
 
@@ -157,7 +183,7 @@ export const login = async (req, res) => {
         model: userModel
       },
       process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
+      { expiresIn: '7d' }
     );
 
     // Prepare user data
@@ -188,6 +214,10 @@ export const login = async (req, res) => {
     if (user.woreda_id) userData.woreda_id = user.woreda_id;
     if (user.kebele_id) userData.kebele_id = user.kebele_id;
     if (user.hospital_id) userData.hospital_id = user.hospital_id;
+
+    // Update last login
+    user.last_login = new Date();
+    await user.save();
 
     res.json({
       success: true,
@@ -399,7 +429,7 @@ export const changePassword = async (req, res) => {
   }
 };
 
-// ==================== FORGOT PASSWORD - WORKS FOR ANY EMAIL ====================
+// ==================== FORGOT PASSWORD ====================
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -419,8 +449,9 @@ export const forgotPassword = async (req, res) => {
 
     let user = null;
 
-    // Search for user in all tables
-    user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
+    // Search for user in all tables (including User table)
+    user = await User.findOne({ where: { email: normalizedEmail } });
+    if (!user) user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await RegionalAdmin.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await ZoneAdmin.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await WoredaAdmin.findOne({ where: { email: normalizedEmail } });
@@ -435,9 +466,8 @@ export const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetExpires = new Date(Date.now() + 3600000); // 1 hour
+    const resetExpires = new Date(Date.now() + 3600000);
 
     user.reset_password_token = resetToken;
     user.reset_password_expires = resetExpires;
@@ -445,23 +475,20 @@ export const forgotPassword = async (req, res) => {
 
     const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password/${resetToken}`;
 
-    // ✅ DEVELOPMENT MODE: Log the reset link (since Resend only works with one email)
     if (isDevelopment) {
       console.log('\n' + '='.repeat(60));
       console.log(`🔐 PASSWORD RESET LINK (Development Mode):`);
       console.log(`Email: ${normalizedEmail}`);
       console.log(`Reset URL: ${resetUrl}`);
-      console.log(`⚠️ Copy this link and paste in your browser to reset password`);
       console.log('='.repeat(60) + '\n');
       
       return res.json({
         success: true,
-        message: `Password reset link created. For development, please check the server console for the link.`,
-        devLink: resetUrl // Only in development - helps testing
+        message: `Password reset link created. Please check the server console for the link.`,
+        devLink: resetUrl
       });
     }
 
-    // In production, try to send email
     try {
       await sendResetPasswordEmail(normalizedEmail, user.first_name, resetToken);
       res.json({
@@ -470,7 +497,6 @@ export const forgotPassword = async (req, res) => {
       });
     } catch (emailError) {
       console.error("❌ Email send error:", emailError);
-      // Still return success but log the link
       console.log(`Reset link for ${normalizedEmail}: ${resetUrl}`);
       res.json({
         success: true,
@@ -508,13 +534,20 @@ export const resetPassword = async (req, res) => {
 
     let user = null;
 
-    // Search for user with valid reset token
-    user = await FederalAdmin.findOne({ 
+    user = await User.findOne({ 
       where: { 
         reset_password_token: token,
         reset_password_expires: { [Op.gt]: new Date() }
       }
     });
+    if (!user) {
+      user = await FederalAdmin.findOne({ 
+        where: { 
+          reset_password_token: token,
+          reset_password_expires: { [Op.gt]: new Date() }
+        }
+      });
+    }
     if (!user) {
       user = await RegionalAdmin.findOne({ 
         where: { 
@@ -571,10 +604,7 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update password and clear tokens
     user.password = hashedPassword;
     user.reset_password_token = null;
     user.reset_password_expires = null;
@@ -617,7 +647,6 @@ export const resendVerification = async (req, res) => {
 
     let user = null;
 
-    // Check all tables
     user = await User.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await RegionalAdmin.findOne({ where: { email: normalizedEmail } });
@@ -635,7 +664,6 @@ export const resendVerification = async (req, res) => {
       });
     }
 
-    // ✅ DEVELOPMENT MODE: Auto-verify any user
     if (isDevelopment) {
       console.log(`✅ Auto-verifying user in development mode: ${normalizedEmail}`);
       user.is_verified = true;
@@ -649,7 +677,6 @@ export const resendVerification = async (req, res) => {
       });
     }
 
-    // Check if already verified
     if (user.is_verified === true) {
       return res.status(400).json({
         success: false,
@@ -657,9 +684,8 @@ export const resendVerification = async (req, res) => {
       });
     }
 
-    // Generate new verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');
-    const tokenExpires = new Date(Date.now() + 86400000); // 24 hours
+    const tokenExpires = new Date(Date.now() + 86400000);
 
     user.verification_token = verificationToken;
     user.verification_token_expires = tokenExpires;
@@ -667,7 +693,6 @@ export const resendVerification = async (req, res) => {
 
     const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email/${verificationToken}`;
 
-    // Development: Log the link
     if (isDevelopment) {
       console.log('\n' + '='.repeat(60));
       console.log(`📧 VERIFICATION LINK (Development Mode):`);
@@ -712,7 +737,6 @@ export const verifyEmail = async (req, res) => {
 
     let user = null;
 
-    // Search for user with valid token
     user = await User.findOne({ 
       where: { 
         verification_token: token,
@@ -787,7 +811,6 @@ export const verifyEmail = async (req, res) => {
 
     console.log("✅ User found for verification:", user.email);
 
-    // Mark email as verified
     user.is_verified = true;
     user.verification_token = null;
     user.verification_token_expires = null;
@@ -809,7 +832,7 @@ export const verifyEmail = async (req, res) => {
   }
 };
 
-// ==================== SET PASSWORD (First time login) ====================
+// ==================== SET PASSWORD ====================
 export const setPassword = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -836,7 +859,6 @@ export const setPassword = async (req, res) => {
 
     let user = null;
 
-    // Find user in all tables
     user = await User.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
     if (!user) user = await RegionalAdmin.findOne({ where: { email: normalizedEmail } });
@@ -853,12 +875,10 @@ export const setPassword = async (req, res) => {
       });
     }
 
-    // ✅ DEVELOPMENT MODE: Auto-verify
     if (isDevelopment && !user.is_verified) {
       user.is_verified = true;
     }
 
-    // Check if email is verified
     if (!user.is_verified) {
       return res.status(400).json({
         success: false,
@@ -866,7 +886,6 @@ export const setPassword = async (req, res) => {
       });
     }
 
-    // Check if password already set
     if (user.password && user.password !== '') {
       return res.status(400).json({
         success: false,
@@ -874,7 +893,6 @@ export const setPassword = async (req, res) => {
       });
     }
 
-    // Hash and set new password
     const hashedPassword = await bcrypt.hash(password, 10);
     user.password = hashedPassword;
     user.last_password_change = new Date();

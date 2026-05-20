@@ -56,25 +56,25 @@ const upload = multer({
 
 // ==================== PATIENT MANAGEMENT ====================
 // Card office staff can register patients
-router.post('/patients/register', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), registerPatient);
+router.post('/patients/register', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), registerPatient);
 
 // Search patients - card office staff can search
-router.get('/patients/search', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), searchPatients);
+router.get('/patients/search', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), searchPatients);
 
 // Get recent patients
-router.get('/patients/recent', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), getRecentPatients);
+router.get('/patients/recent', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), getRecentPatients);
 
 // Get patient by ID
-router.get('/patients/:id', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), getPatientById);
+router.get('/patients/:id', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), getPatientById);
 
 // Update patient
-router.put('/patients/:id', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), updatePatient);
+router.put('/patients/:id', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), updatePatient);
 
 // Send returning patient to triage
-router.post('/patients/send-to-triage', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), sendToTriage);
+router.post('/patients/send-to-triage', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), sendToTriage);
 
 // ==================== STATISTICS ====================
-router.get('/stats', protect, restrictTo('card_office', 'card_office_staff', 'cardofffice'), getCardOfficeStats);
+router.get('/stats', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), getCardOfficeStats);
 
 // ==================== STAFF PROFILE ====================
 // Get profile - any authenticated staff

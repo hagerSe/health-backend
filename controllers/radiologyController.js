@@ -19,29 +19,45 @@ if (!fs.existsSync(radiologyDir)) {
   fs.mkdirSync(radiologyDir, { recursive: true });
 }
 
+// In radiologyController.js - Update the multer configuration
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, radiologyDir);
+    const dir = 'uploads/radiology';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `radiology-${uniqueSuffix}${path.extname(file.originalname)}`);
+    const ext = path.extname(file.originalname);
+    cb(null, `radiology-${uniqueSuffix}${ext}`);
   }
 });
 
 export const upload = multer({ 
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { 
+    fileSize: 50 * 1024 * 1024  // 50MB limit for medical images
+  },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/dicom', 'application/dicom', 'image/jpg'];
-    if (allowedTypes.includes(file.mimetype)) {
+    const allowedTypes = [
+      'image/jpeg', 
+      'image/jpg', 
+      'image/png', 
+      'image/gif', 
+      'image/dicom',
+      'application/dicom',
+      'image/dicom-rle'
+    ];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(dcm|dicom)$/i)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only images are allowed.'));
+      cb(new Error('Invalid file type. Only images and DICOM files are allowed.'));
     }
   }
 });
-
 // ==================== HELPER FUNCTIONS ====================
 const generateRequestNumber = async () => {
   const date = new Date();
@@ -374,87 +390,167 @@ export const uploadImages = async (req, res) => {
 // @desc    Submit radiology report
 // @route   PUT /api/radiology/report/:id
 // @access  Private
+// In radiologyController.js - Replace the submitReport function
+// backend/controllers/radiologyController.js
+// REPLACE the entire submitReport function with this:
+// backend/controllers/radiologyController.js
+// REPLACE the submitReport function with this:
+
+// In radiologyController.js - Update the submitReport function
+
 export const submitReport = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { id } = req.params;
-    const { report, images } = req.body;
-    const staffId = req.user.id;
-    const staffName = req.user.full_name || `${req.user.first_name} ${req.user.last_name}`;
+    const { 
+      findings, 
+      impression, 
+      recommendations,
+      clinical_history,
+      critical
+    } = req.body;
 
+    console.log(`📝 Submitting radiology report for request: ${id}`);
+
+    const staffId = req.user.id;
+    const staffName = req.user.full_name || `${req.user.first_name} ${req.user.last_name}`.trim();
+
+    // Find the request
     const request = await RadiologyRequest.findByPk(id, { transaction });
 
     if (!request) {
       await transaction.rollback();
-      return res.status(404).json({ success: false, message: 'Request not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: `Radiology request with ID ${id} not found` 
+      });
     }
 
     if (request.status !== 'in_progress') {
       await transaction.rollback();
-      return res.status(400).json({ success: false, message: `Cannot submit report with status: ${request.status}` });
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot submit report. Request status is '${request.status}', expected 'in_progress'` 
+      });
     }
 
-    // Create radiology report
-    const radiologyReport = await RadiologyReport.create({
-      request_id: request.id,
-      patient_id: request.patient_id,
-      doctor_id: request.doctor_id,
-      radiologist_id: staffId,
-      radiologist_name: staffName,
-      exam_type: request.exam_type,
-      body_part: request.body_part,
-      findings: report.findings,
-      impression: report.impression,
-      critical: report.critical || false,
-      images: images || [],
-      submitted_at: new Date(),
-      status: 'submitted'
-    }, { transaction });
-
-    // Update request
-    await request.update({
-      status: 'completed',
-      completed_at: new Date(),
-      report_id: radiologyReport.id
-    }, { transaction });
-
-    await transaction.commit();
-
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`hospital_${request.hospital_id}_radiology`).emit('radiology_request_updated', {
-        request_id: request.id,
-        status: 'completed',
-        patient_name: request.patient_name
-      });
-      
-      if (request.doctor_id) {
-        io.to(`hospital_${request.hospital_id}_doctor_${request.doctor_id}`).emit('radiology_report_ready', {
-          request_id: request.id,
-          patient_id: request.patient_id,
-          patient_name: request.patient_name,
-          exam_type: request.exam_type,
-          report_id: radiologyReport.id,
-          critical: report.critical,
-          findings: report.findings,
-          impression: report.impression,
-          images_count: (images || []).length,
-          submitted_by: staffName,
-          submitted_at: new Date().toISOString()
+    // Process images from uploaded files
+    let processedImages = [];
+    if (req.files && req.files.length > 0) {
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      for (const file of req.files) {
+        processedImages.push({
+          url: `${baseUrl}/uploads/radiology/${file.filename}`,
+          filename: file.filename,
+          originalName: file.originalname,
+          size: file.size,
+          type: file.mimetype,
+          uploaded_at: new Date().toISOString(),
+          uploaded_by: staffName
         });
       }
     }
 
-    res.json({ 
+    // Check if report already exists
+    let radiologyReport = await RadiologyReport.findOne({
+      where: { request_id: request.id },
+      transaction
+    });
+
+    if (radiologyReport) {
+      // Update existing report
+      await radiologyReport.update({
+        findings: findings || radiologyReport.findings,
+        impression: impression || radiologyReport.impression,
+        recommendations: recommendations || radiologyReport.recommendations,
+        clinical_history: clinical_history || radiologyReport.clinical_history,
+        critical: critical === true || critical === 'true' || radiologyReport.critical,
+        images: processedImages.length > 0 ? processedImages : radiologyReport.images,
+        status: 'completed',
+        submitted_at: new Date(),
+        reported_at: new Date(),
+        reported_by: staffName,
+        radiologist_id: staffId,
+        radiologist_name: staffName
+      }, { transaction });
+      console.log(`✅ Updated existing radiology report for request ${id}`);
+    } else {
+      // Create new report
+      radiologyReport = await RadiologyReport.create({
+        request_id: request.id,
+        patient_id: request.patient_id,
+        patient_name: request.patient_name,
+        doctor_id: request.doctor_id,
+        doctor_name: request.doctor_name,
+        radiologist_id: staffId,
+        radiologist_name: staffName,
+        exam_type: request.exam_type,
+        body_part: request.body_part,
+        hospital_id: request.hospital_id,
+        clinical_history: clinical_history || request.clinical_notes,
+        findings: findings || '',
+        impression: impression || '',
+        recommendations: recommendations || '',
+        critical: critical === true || critical === 'true' || false,
+        images: processedImages,
+        status: 'completed',
+        submitted_at: new Date(),
+        reported_at: new Date(),
+        reported_by: staffName
+      }, { transaction });
+      console.log(`✅ Created new radiology report for request ${id}, report_id: ${radiologyReport.id}`);
+    }
+
+    // Update the request
+    await request.update({
+      status: 'completed',
+      completed_at: new Date(),
+      report_id: radiologyReport.id,
+      report_submitted_at: new Date()
+    }, { transaction });
+
+    await transaction.commit();
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io && request.doctor_id) {
+      io.to(`hospital_${request.hospital_id}_doctor_${request.doctor_id}`).emit('radiology_report_ready', {
+        request_id: request.id,
+        report_id: radiologyReport.id,
+        patient_id: request.patient_id,
+        patient_name: request.patient_name,
+        exam_type: request.exam_type,
+        findings: findings || '',
+        impression: impression || '',
+        critical: critical === true || critical === 'true',
+        images_count: processedImages.length,
+        submitted_by: staffName,
+        submitted_at: new Date().toISOString()
+      });
+    }
+
+    res.status(200).json({ 
       success: true, 
       message: 'Report submitted successfully',
-      report: radiologyReport,
-      request
+      report: {
+        id: radiologyReport.id,
+        request_id: request.id,
+        findings: radiologyReport.findings,
+        impression: radiologyReport.impression,
+        critical: radiologyReport.critical,
+        images: processedImages,
+        submitted_at: radiologyReport.submitted_at
+      }
     });
+    
   } catch (error) {
     await transaction.rollback();
-    console.error('Error submitting report:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error submitting radiology report:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
