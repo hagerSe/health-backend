@@ -1,21 +1,18 @@
-import { Sequelize } from 'sequelize';
-import config from './config.js';
+import { Sequelize } from "sequelize";
+import dotenv from "dotenv";
 
-const env = process.env.NODE_ENV || 'development';
+dotenv.config();
 
-const envConfig = config[env];
-
-const db = new Sequelize({
-  database: envConfig.database,
-  username: envConfig.username,
-  password: String(envConfig.password),
-  host: envConfig.host,
-  port: envConfig.port,
-  dialect: envConfig.dialect,
+const sequelize = new Sequelize(process.env.DATABASE_URL, {
+  dialect: "postgres",
+  protocol: "postgres",
   logging: false,
-   dialectOptions: {
-      // ssl: false,              // DISABLE SSL
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false,
     },
+  },
 });
 
-export default db;
+export default sequelize;
