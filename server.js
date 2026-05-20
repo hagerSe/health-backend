@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import jwt from 'jsonwebtoken'; // ✅ ADD THIS IMPORT
 import sequelize from "./config/database.js";
 import "./models/index.js";
 import cron from 'node-cron';
@@ -50,7 +51,7 @@ const allowedOrigins = [
   'https://health-frontend-cav3.vercel.app',
   'https://health-frontend-cav3.vercel.app',
   'https://health-frontend-cav3.vercel.app/*',
-  'https://*.vercel.app',  // Allow all Vercel preview deployments
+  'https://*.vercel.app',
   'https://health-backend-2-gqv6.onrender.com',
   process.env.CLIENT_URL
 ].filter(Boolean);
@@ -58,14 +59,13 @@ const allowedOrigins = [
 // CORS options for Express
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, postman)
     if (!origin) return callback(null, true);
     
     if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
       console.log('❌ CORS blocked origin:', origin);
-      callback(null, true); // Allow anyway for now
+      callback(null, true);
     }
   },
   credentials: true,
@@ -75,7 +75,7 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 
-// Create HTTP server for Socket.io
+// ==================== SOCKET.IO SETUP ====================
 const server = http.createServer(app);
 
 // Socket.io setup with CORS
@@ -89,8 +89,30 @@ const io = new Server(server, {
   transports: ['polling', 'websocket']
 });
 
+// ===== ADD AUTHENTICATION MIDDLEWARE HERE =====
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  
+  if (!token) {
+    console.error('❌ Socket connection rejected: No token provided');
+    return next(new Error('Authentication required'));
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    socket.user = decoded;
+    console.log(`✅ Socket authenticated: ${socket.id} - User: ${decoded.email || decoded.id}`);
+    next();
+  } catch (err) {
+    console.error('❌ Socket authentication failed:', err.message);
+    next(new Error('Invalid token'));
+  }
+});
+
+// ===== SOCKET EVENT HANDLERS =====
 io.on('connection', (socket) => {
   console.log('🔌 New client connected:', socket.id);
+  console.log('👤 Authenticated user:', socket.user?.email || socket.user?.id);
 
   // Join hospital-specific room
   socket.on('join_hospital', (hospitalId) => {
@@ -211,6 +233,19 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Join card office room
+  socket.on('join_cardoffice', (hospitalId) => {
+    const roomName = `hospital_${hospitalId}_cardoffice`;
+    socket.join(roomName);
+    console.log(`📡 Socket ${socket.id} joined card office room: ${roomName}`);
+    
+    socket.emit('joined_cardoffice', { 
+      room: roomName, 
+      success: true,
+      hospitalId 
+    });
+  });
+
   // Leave room
   socket.on('leave_room', (room) => {
     socket.leave(room);
@@ -235,6 +270,22 @@ io.on('connection', (socket) => {
   });
 });
 
+// ===== MAKE SOCKET.IO AVAILABLE TO ROUTES =====
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
+// Add test endpoint for Socket.io
+app.get('/api/socket-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Socket.io is available',
+    clients: io.engine.clientsCount,
+    rooms: Array.from(io.sockets.adapter.rooms.keys()).length
+  });
+});
+
 // Make io accessible to routes
 app.set('io', io);
 
@@ -245,6 +296,7 @@ app.use(cors(corsOptions));
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
 // ==================== ROUTES ====================
 
 // Health check endpoint (for Render)
@@ -254,6 +306,11 @@ app.get("/health", (req, res) => {
     message: "Server is running",
     timestamp: new Date().toISOString()
   });
+});
+
+// Test route
+app.get("/", (req, res) => {
+  res.send("✅ NHMS Server is running!");
 });
 
 // Admin & Report Routes
@@ -274,7 +331,8 @@ app.use('/api/beds', bedRoutes);
 app.use('/api/midwife', midwifeRoutes);
 app.use('/api/hr', hrRoutes);
 app.use("/api", uploadRoutes);
-// Add this after other routes
+
+// Debug route for doctor routes
 app.get('/api/debug/doctor-routes', (req, res) => {
   res.json({
     success: true,
@@ -301,15 +359,26 @@ app.get('/api/debug/doctor-routes', (req, res) => {
     ]
   });
 });
+
 // ===== NEW HOSPITAL MANAGEMENT ROUTES =====
+// Add this BEFORE your cardoffice routes
+app.get('/api/debug/cardoffice-status', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Card Office routes are registered',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Add global error handler for debugging
+app.use('/api/cardoffice', (req, res, next) => {
+  console.log(`📡 Card Office API called: ${req.method} ${req.url}`);
+  console.log(`🔑 Headers:`, req.headers.authorization ? 'Has token' : 'No token');
+  next();
+});
 app.use('/api/cardoffice', cardofficeRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/ward', wardRoutes);
-
-// Test route
-app.get("/", (req, res) => {
-  res.send("✅ NHMS Server is running!");
-});
 
 // Socket debug endpoint
 app.get('/api/socket/debug', (req, res) => {
@@ -329,7 +398,7 @@ app.get('/api/socket/debug', (req, res) => {
   });
 });
 
-// Add this before your routes
+// Debug uploads endpoint
 app.get('/api/debug/uploads', (req, res) => {
   const uploadsPath = path.join(__dirname, 'uploads');
   
@@ -378,26 +447,57 @@ if (!fs.existsSync(patientCardsDir)) {
 
 const PORT = process.env.PORT || 5001;
 
-// Start HTTP server immediately - Bind to 0.0.0.0 for Render
+// Start HTTP server - Bind to 0.0.0.0 for Render
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
   console.log(`✅ Root route: http://localhost:${PORT}/ - You should see "NHMS Server is running!"`);
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
+  console.log(`✅ Socket.io test: http://localhost:${PORT}/api/socket-test`);
 });
 
 // Connect to database asynchronously
 (async () => {
   try {
-    // Connect to database
     await sequelize.authenticate();
     console.log("✅ Database connected successfully!");
 
-    // Sync models (with alter for development)
-     if (process.env.NODE_ENV === 'production') {
-  await sequelize.sync({ alter: false }); // Don't alter in production
-} else {
-await sequelize.sync({ alter: true, except: ['users'] });// Development only
-}
+    // Auto-run verification fields migration if needed (self-healing migration)
+    try {
+      const migrationTables = [
+        'federal_admins',
+        'regional_admins', 
+        'zone_admins',
+        'woreda_admins',
+        'kebele_admins',
+        'hospital_admins',
+        'hospital_staff'
+      ];
+      for (const table of migrationTables) {
+        const [results] = await sequelize.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = '${table}'
+          );
+        `);
+        if (results[0].exists) {
+          await sequelize.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;`);
+          await sequelize.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS verification_token TEXT;`);
+          await sequelize.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS verification_token_expires TIMESTAMP;`);
+          await sequelize.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS reset_password_token TEXT;`);
+          await sequelize.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS reset_password_expires TIMESTAMP;`);
+          await sequelize.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS last_login TIMESTAMP;`);
+        }
+      }
+      console.log("✅ Out-of-band verification fields migration checked/completed successfully.");
+    } catch (migError) {
+      console.error("⚠️ Out-of-band migration check failed:", migError.message);
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      await sequelize.sync({ alter: false });
+    } else {
+      await sequelize.sync({ alter: true, except: ['users'] });
+    }
     console.log("✅ Models synced");
 
     // Schedule auto-close reports job (runs daily at midnight)
@@ -431,7 +531,6 @@ await sequelize.sync({ alter: true, except: ['users'] });// Development only
     console.log("📋 AVAILABLE API ROUTES");
     console.log("=".repeat(60));
     
-    // Admin Routes
     console.log("\n🏛️ ADMIN ROUTES:");
     console.log(`   ✅ Auth: http://localhost:${PORT}/api/auth/login`);
     console.log(`   ✅ Federal: http://localhost:${PORT}/api/federal/profile`);
@@ -440,7 +539,6 @@ await sequelize.sync({ alter: true, except: ['users'] });// Development only
     console.log(`   ✅ Woreda: http://localhost:${PORT}/api/woreda/profile`);
     console.log(`   ✅ Kebele: http://localhost:${PORT}/api/kebele/profile`);
     
-    // Hospital Management Routes
     console.log("\n🏥 HOSPITAL MANAGEMENT ROUTES:");
     console.log(`   ✅ Card Office: http://localhost:${PORT}/api/cardoffice/patients/recent`);
     console.log(`   ✅ Triage: http://localhost:${PORT}/api/triage/queue`);
@@ -448,7 +546,6 @@ await sequelize.sync({ alter: true, except: ['users'] });// Development only
     console.log(`   ✅ EME Ward: http://localhost:${PORT}/api/ward/eme/patients`);
     console.log(`   ✅ ANC Ward: http://localhost:${PORT}/api/ward/anc/patients`);
     
-    // Department Routes
     console.log("\n👨‍⚕️ DEPARTMENT ROUTES:");
     console.log(`   ✅ Doctor: http://localhost:${PORT}/api/doctor/queue`);
     console.log(`   ✅ Lab: http://localhost:${PORT}/api/lab/pending`);
@@ -457,7 +554,6 @@ await sequelize.sync({ alter: true, except: ['users'] });// Development only
     console.log(`   ✅ Bed Management: http://localhost:${PORT}/api/beds/available`);
     console.log(`   ✅ Midwife: http://localhost:${PORT}/api/midwife/patients`);
     
-    // Human Resources Routes
     console.log("\n👥 HUMAN RESOURCES ROUTES:");
     console.log(`   ✅ HR Staff: http://localhost:${PORT}/api/hr/staff`);
     console.log(`   ✅ HR Schedules: http://localhost:${PORT}/api/hr/schedules`);
@@ -465,25 +561,27 @@ await sequelize.sync({ alter: true, except: ['users'] });// Development only
     console.log(`   ✅ HR Stats: http://localhost:${PORT}/api/hr/stats`);
     console.log(`   ✅ HR Auto-Schedule: http://localhost:${PORT}/api/hr/schedule/auto-generate`);
     
-    // Other Routes
     console.log("\n📁 OTHER ROUTES:");
     console.log(`   ✅ Users: http://localhost:${PORT}/api/users/by-level`);
     console.log(`   ✅ Uploads: http://localhost:${PORT}/uploads/`);
     console.log(`   ✅ Debug Uploads: http://localhost:${PORT}/api/debug/uploads`);
     console.log(`   ✅ Socket Debug: http://localhost:${PORT}/api/socket/debug`);
+    console.log(`   ✅ Socket Test: http://localhost:${PORT}/api/socket-test`);
     
     console.log("\n" + "=".repeat(60));
     console.log("🔌 SOCKET.IO ROOMS AVAILABLE:");
+    console.log(`   • hospital_{hospitalId}`);
     console.log(`   • hospital_{hospitalId}_triage`);
+    console.log(`   • hospital_{hospitalId}_cardoffice`);
     console.log(`   • hospital_{hospitalId}_ward_OPD`);
     console.log(`   • hospital_{hospitalId}_ward_EME`);
     console.log(`   • hospital_{hospitalId}_ward_ANC`);
-    console.log(`   • hospital_{hospitalId}_lab (NEW - Lab Department)`);
-    console.log(`   • hospital_{hospitalId}_pharmacy (NEW - Pharmacy Department)`);
-    console.log(`   • hospital_{hospitalId}_radiology (NEW - Radiology Department)`);
-    console.log(`   • hospital_{hospitalId}_hr (HR Department)`);
-    console.log(`   • hospital_{hospitalId}_doctor_{doctorId} (Individual Doctor)`);
-    console.log(`   • hospital_{hospitalId}_staff_{staffId} (Individual Staff)`);
+    console.log(`   • hospital_{hospitalId}_lab`);
+    console.log(`   • hospital_{hospitalId}_pharmacy`);
+    console.log(`   • hospital_{hospitalId}_radiology`);
+    console.log(`   • hospital_{hospitalId}_hr`);
+    console.log(`   • hospital_{hospitalId}_doctor_{doctorId}`);
+    console.log(`   • hospital_{hospitalId}_staff_{staffId}`);
     console.log("=".repeat(60) + "\n");
     
   } catch (error) {
