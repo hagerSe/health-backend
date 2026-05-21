@@ -48,6 +48,7 @@ dotenv.config();
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'https://ager-indol.vercel.app',
   'https://ager-3lwu2spxn-fullstacks-projects-a4c7a5f9.vercel.app',
   'https://health-backend-2-gqv6.onrender.com',
   'https://health-frontend-cav3.vercel.app',
@@ -93,18 +94,29 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (isOriginAllowed(origin)) {
+      console.log(`🔍 Socket.IO CORS check for origin: ${origin}`);
+      
+      if (!origin) {
+        console.log(`✅ No origin provided, allowing`);
         return callback(null, true);
       }
-      console.warn('❌ Socket CORS blocked origin:', origin);
+      
+      if (isOriginAllowed(origin)) {
+        console.log(`✅ Socket.IO CORS allowed: ${origin}`);
+        return callback(null, true);
+      }
+      
+      console.warn(`❌ Socket CORS blocked origin: ${origin}`);
+      console.warn(`   Allowed origins: ${JSON.stringify(allowedOrigins)}`);
       callback(new Error('Not allowed by Socket CORS'));
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["Content-Range", "X-Content-Range"]
   },
   allowEIO3: true,
-  transports: ['polling', 'websocket']
+  transports: ['websocket', 'polling']
 });
 
 // ===== ADD AUTHENTICATION MIDDLEWARE HERE =====
