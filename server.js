@@ -48,49 +48,42 @@ dotenv.config();
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://health-frontend-cav3.vercel.app',
+  'https://ager-3lwu2spxn-fullstacks-projects-a4c7a5f9.vercel.app',
   'https://health-backend-2-gqv6.onrender.com',
-  'https://health-frontend-cav3.vercel.app',  // Add again with different protocol
-  'http://health-frontend-cav3.vercel.app',   // Add HTTP version
-  /\.vercel\.app$/,  // Allow all Vercel subdomains
+  'https://health-frontend-cav3.vercel.app',
   process.env.CLIENT_URL,
-  process.env.FRONTEND_URL
+  process.env.FRONTEND_URL,
+  /\.vercel\.app$/
 ].filter(Boolean);
 
 const isOriginAllowed = (origin) => {
   if (!origin) return true;
-  if (process.env.NODE_ENV !== 'production') return true;
-  return allowedOrigins.includes(origin);
+  return allowedOrigins.some((allowed) => {
+    if (allowed instanceof RegExp) {
+      return allowed.test(origin);
+    }
+    return allowed === origin;
+  });
 };
 
-// CORS options for Express
-// TEMPORARY - More permissive CORS for debugging
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    
-    // Log all origins for debugging
-    console.log('🔍 CORS Request from origin:', origin);
-    
-    // Allow any origin in production for testing (REMOVE AFTER FIXING)
-    if (process.env.NODE_ENV === 'production') {
+  origin: (origin, callback) => {
+    if (!origin) {
       return callback(null, true);
     }
-    
-    // Check against allowed list
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.match(/\.vercel\.app$/)) {
-      callback(null, true);
-    } else {
-      console.log('❌ CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
     }
+
+    console.warn(`❌ CORS blocked origin: ${origin}`);
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 };
 
 // ==================== SOCKET.IO SETUP ====================
@@ -99,12 +92,13 @@ const server = http.createServer(app);
 // Socket.io setup with CORS
 const io = new Server(server, {
   cors: {
-    origin: function (origin, callback) {
-      if (!isOriginAllowed(origin)) {
-        console.log('❌ Socket CORS blocked origin:', origin);
-        return callback(new Error('Not allowed by Socket CORS'));
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
       }
-      callback(null, true);
+      console.warn('❌ Socket CORS blocked origin:', origin);
+      callback(new Error('Not allowed by Socket CORS'));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
@@ -300,6 +294,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// Normalize malformed duplicate API prefixes like /api/api/... to /api/...
+app.use((req, res, next) => {
+  if (req.originalUrl.startsWith('/api/api/')) {
+    req.url = req.url.replace(/^\/api\/api(\/|$)/, '/api$1');
+  }
+  next();
+});
+
 // Add test endpoint for Socket.io
 app.get('/api/socket-test', (req, res) => {
   res.json({
@@ -316,6 +318,7 @@ app.set('io', io);
 // ==================== MIDDLEWARE ====================
 // Apply CORS first (handles preflight automatically)
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
