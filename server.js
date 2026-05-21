@@ -330,15 +330,12 @@ app.set('io', io);
 // ==================== MIDDLEWARE ====================
 // Apply CORS first (handles preflight automatically)
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // ==================== ROUTES ====================
-
-// Health check endpoint (for Render)
 app.get("/health", (req, res) => {
   res.status(200).json({ 
     status: "OK", 
