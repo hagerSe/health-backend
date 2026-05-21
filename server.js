@@ -49,23 +49,41 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://health-frontend-cav3.vercel.app',
-  'https://health-frontend-cav3.vercel.app',
-  'https://health-frontend-cav3.vercel.app/*',
-  'https://*.vercel.app',
   'https://health-backend-2-gqv6.onrender.com',
-  process.env.CLIENT_URL
+  'https://health-frontend-cav3.vercel.app',  // Add again with different protocol
+  'http://health-frontend-cav3.vercel.app',   // Add HTTP version
+  /\.vercel\.app$/,  // Allow all Vercel subdomains
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL
 ].filter(Boolean);
 
+const isOriginAllowed = (origin) => {
+  if (!origin) return true;
+  if (process.env.NODE_ENV !== 'production') return true;
+  return allowedOrigins.includes(origin);
+};
+
 // CORS options for Express
+// TEMPORARY - More permissive CORS for debugging
 const corsOptions = {
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+    // Log all origins for debugging
+    console.log('🔍 CORS Request from origin:', origin);
+    
+    // Allow any origin in production for testing (REMOVE AFTER FIXING)
+    if (process.env.NODE_ENV === 'production') {
+      return callback(null, true);
+    }
+    
+    // Check against allowed list
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.match(/\.vercel\.app$/)) {
       callback(null, true);
     } else {
       console.log('❌ CORS blocked origin:', origin);
-      callback(null, true);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
@@ -81,7 +99,13 @@ const server = http.createServer(app);
 // Socket.io setup with CORS
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+      if (!isOriginAllowed(origin)) {
+        console.log('❌ Socket CORS blocked origin:', origin);
+        return callback(new Error('Not allowed by Socket CORS'));
+      }
+      callback(null, true);
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
   },
