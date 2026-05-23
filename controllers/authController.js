@@ -17,25 +17,37 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 
 // ==================== VALIDATION HELPER FUNCTIONS ====================
 
-// 1. Validate Email Format (any valid email with .com, .org, .et, etc.)
+// 1. Validate Email Format - ONLY .com domain allowed
 const validateEmail = (email) => {
   if (!email) {
     return { valid: false, message: "Email is required" };
   }
   
-  // Standard email regex - allows any domain (.com, .org, .et, .gov, etc.)
-  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  // Remove any whitespace
+  email = email.trim();
   
-  if (!emailRegex.test(email)) {
+  // ONLY allows .com domain at the end
+  const dotComRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.com$/;
+  
+  if (!dotComRegex.test(email)) {
     return { 
       valid: false, 
-      message: "Invalid email format. Example: name@domain.com, name@organization.org, name@health.gov.et" 
+      message: "Invalid email format. Only .com domain emails are allowed. Examples: username@gmail.com, admin@company.com" 
     };
   }
   
   // Check email length
+  if (email.length < 5) {
+    return { valid: false, message: "Email is too short" };
+  }
+  
   if (email.length > 100) {
     return { valid: false, message: "Email must be less than 100 characters" };
+  }
+  
+  // Check for consecutive dots (invalid)
+  if (email.includes('..')) {
+    return { valid: false, message: "Email cannot contain consecutive dots" };
   }
   
   return { valid: true, message: "Email format is valid" };
@@ -387,7 +399,7 @@ export const createAdmin = async (req, res) => {
 
     // ==================== COMPLETE VALIDATION ====================
     
-    // 1. Validate Email
+    // 1. Validate Email (.com only)
     const emailValidation = validateEmail(email);
     if (!emailValidation.valid) {
       return res.status(400).json({
@@ -744,7 +756,7 @@ export const checkEmailAvailability = async (req, res) => {
       });
     }
     
-    // Validate email format first
+    // Validate email format first (.com only)
     const emailValidation = validateEmail(email);
     if (!emailValidation.valid) {
       return res.status(400).json({
