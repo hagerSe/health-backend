@@ -15,6 +15,38 @@ import { sendVerificationEmail, sendResetPasswordEmail } from "../utils/emailSer
 // ==================== DEVELOPMENT CONFIGURATION ====================
 const isDevelopment = process.env.NODE_ENV === 'development';
 
+// ==================== HELPER: CHECK EMAIL IN ALL TABLES ====================
+const checkEmailInAllTables = async (email) => {
+  const normalizedEmail = email.toLowerCase().trim();
+  
+  // Check all tables sequentially
+  const federalExists = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
+  if (federalExists) return { exists: true, table: 'Federal Admin' };
+  
+  const regionalExists = await RegionalAdmin.findOne({ where: { email: normalizedEmail } });
+  if (regionalExists) return { exists: true, table: 'Regional Admin' };
+  
+  const zoneExists = await ZoneAdmin.findOne({ where: { email: normalizedEmail } });
+  if (zoneExists) return { exists: true, table: 'Zone Admin' };
+  
+  const woredaExists = await WoredaAdmin.findOne({ where: { email: normalizedEmail } });
+  if (woredaExists) return { exists: true, table: 'Woreda Admin' };
+  
+  const kebeleExists = await KebeleAdmin.findOne({ where: { email: normalizedEmail } });
+  if (kebeleExists) return { exists: true, table: 'Kebele Admin' };
+  
+  const hospitalExists = await HospitalAdmin.findOne({ where: { email: normalizedEmail } });
+  if (hospitalExists) return { exists: true, table: 'Hospital Admin' };
+  
+  const staffExists = await HospitalStaff.findOne({ where: { email: normalizedEmail } });
+  if (staffExists) return { exists: true, table: 'Hospital Staff' };
+  
+  const userExists = await User.findOne({ where: { email: normalizedEmail } });
+  if (userExists) return { exists: true, table: 'User' };
+  
+  return { exists: false, table: null };
+};
+
 // ==================== LOGIN FUNCTION - WORKS FOR ALL TABLES (INCLUDING USER) ====================
 export const login = async (req, res) => {
   try {
@@ -926,6 +958,352 @@ export const logout = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error during logout"
+    });
+  }
+};
+
+// ==================== CREATE ADMIN WITH DUPLICATE CHECK (NEW) ====================
+export const createAdmin = async (req, res) => {
+  try {
+    const { 
+      email, 
+      password, 
+      adminType,
+      first_name, 
+      last_name,
+      middle_name,
+      region_name,
+      zone_name,
+      woreda_name,
+      kebele_name,
+      hospital_name,
+      department,
+      phone,
+      gender,
+      age,
+      ...otherData 
+    } = req.body;
+
+    console.log("=".repeat(60));
+    console.log("📝 Create Admin Request:");
+    console.log("Email:", email);
+    console.log("Type:", adminType);
+    console.log("=".repeat(60));
+
+    // Validate required fields
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required"
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required"
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters"
+      });
+    }
+
+    if (!first_name || !last_name) {
+      return res.status(400).json({
+        success: false,
+        message: "First name and last name are required"
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // ✅ CRITICAL: Check if email exists in ANY table
+    const emailCheck = await checkEmailInAllTables(normalizedEmail);
+    
+    if (emailCheck.exists) {
+      console.log(`❌ DUPLICATE EMAIL: ${normalizedEmail} already exists in ${emailCheck.table}`);
+      
+      return res.status(409).json({
+        success: false,
+        message: `Email "${email}" is already registered as a ${emailCheck.table}. Please use a different email address.`,
+        existingTable: emailCheck.table
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpires = new Date(Date.now() + 86400000);
+
+    let newAdmin = null;
+    let responseType = adminType;
+
+    // Create based on admin type
+    switch(adminType) {
+      case 'federal':
+        newAdmin = await FederalAdmin.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'federal';
+        break;
+
+      case 'regional':
+        if (!region_name) {
+          return res.status(400).json({
+            success: false,
+            message: "region_name is required for Regional Admin"
+          });
+        }
+        newAdmin = await RegionalAdmin.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          region_name: region_name,
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'regional';
+        break;
+
+      case 'zone':
+        if (!region_name || !zone_name) {
+          return res.status(400).json({
+            success: false,
+            message: "region_name and zone_name are required for Zone Admin"
+          });
+        }
+        newAdmin = await ZoneAdmin.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          region_name: region_name,
+          zone_name: zone_name,
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'zone';
+        break;
+
+      case 'woreda':
+        if (!region_name || !zone_name || !woreda_name) {
+          return res.status(400).json({
+            success: false,
+            message: "region_name, zone_name, and woreda_name are required for Woreda Admin"
+          });
+        }
+        newAdmin = await WoredaAdmin.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          region_name: region_name,
+          zone_name: zone_name,
+          woreda_name: woreda_name,
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'woreda';
+        break;
+
+      case 'kebele':
+        if (!region_name || !zone_name || !woreda_name || !kebele_name) {
+          return res.status(400).json({
+            success: false,
+            message: "region_name, zone_name, woreda_name, and kebele_name are required for Kebele Admin"
+          });
+        }
+        newAdmin = await KebeleAdmin.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          region_name: region_name,
+          zone_name: zone_name,
+          woreda_name: woreda_name,
+          kebele_name: kebele_name,
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'kebele';
+        break;
+
+      case 'hospital':
+        if (!hospital_name) {
+          return res.status(400).json({
+            success: false,
+            message: "hospital_name is required for Hospital Admin"
+          });
+        }
+        newAdmin = await HospitalAdmin.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          hospital_name: hospital_name,
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'hospital';
+        break;
+
+      case 'staff':
+        if (!hospital_name || !department) {
+          return res.status(400).json({
+            success: false,
+            message: "hospital_name and department are required for Hospital Staff"
+          });
+        }
+        newAdmin = await HospitalStaff.create({
+          email: normalizedEmail,
+          password: hashedPassword,
+          first_name: first_name,
+          last_name: last_name,
+          middle_name: middle_name || '',
+          hospital_name: hospital_name,
+          department: department,
+          phone: phone || null,
+          gender: gender || null,
+          age: age || null,
+          is_verified: isDevelopment ? true : false,
+          verification_token: verificationToken,
+          verification_token_expires: tokenExpires,
+          status: 'active',
+          ...otherData
+        });
+        responseType = 'staff';
+        break;
+
+      default:
+        return res.status(400).json({
+          success: false,
+          message: `Invalid admin type: ${adminType}. Valid types: federal, regional, zone, woreda, kebele, hospital, staff`
+        });
+    }
+
+    console.log(`✅ ${adminType} admin created successfully:`, normalizedEmail);
+
+    // Send verification email in production
+    if (!isDevelopment && newAdmin) {
+      const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email/${verificationToken}`;
+      try {
+        await sendVerificationEmail(normalizedEmail, first_name, verificationToken);
+        console.log("📧 Verification email sent to:", normalizedEmail);
+      } catch (emailError) {
+        console.error("Email send error:", emailError.message);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `${responseType} admin created successfully! ${isDevelopment ? 'Auto-verified in development mode.' : 'Verification email sent.'}`,
+      admin: {
+        id: newAdmin.id,
+        email: newAdmin.email,
+        name: `${first_name} ${last_name}`,
+        type: responseType,
+        is_verified: newAdmin.is_verified
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Create admin error:", error);
+    
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({
+        success: false,
+        message: "Email already exists in this table. Please use a different email."
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: "Server error while creating admin",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// ==================== CHECK EMAIL AVAILABILITY ====================
+export const checkEmailAvailability = async (req, res) => {
+  try {
+    const { email } = req.query;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required"
+      });
+    }
+    
+    const result = await checkEmailInAllTables(email);
+    
+    res.json({
+      success: true,
+      available: !result.exists,
+      exists: result.exists,
+      existingTable: result.table,
+      message: result.exists 
+        ? `Email is already used by ${result.table}` 
+        : "Email is available"
+    });
+  } catch (error) {
+    console.error("Check email error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error checking email availability"
     });
   }
 };
