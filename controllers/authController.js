@@ -17,10 +17,6 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 
 // ==================== VALIDATION HELPER FUNCTIONS ====================
 
-// 1. Validate Email Format - ONLY .com domain allowed
-// ==================== VALIDATION HELPER FUNCTIONS ====================
-
-// 1. Validate Email Format - ONLY .com domain allowed
 // 1. Validate Email Format - Accepts all valid email formats
 const validateEmail = (email) => {
   if (!email) {
@@ -29,27 +25,24 @@ const validateEmail = (email) => {
   
   const trimmedEmail = email.trim();
   
+  // Check for spaces FIRST
+  if (trimmedEmail.includes(' ')) {
+    return { valid: false, message: "Email cannot contain spaces" };
+  }
+  
   // Must contain @
   if (!trimmedEmail.includes('@')) {
     return { valid: false, message: "Email must contain @ symbol" };
   }
   
-  // REMOVED the .com restriction - now accepts all valid domains
-  // Valid domains: .com, .org, .net, .gov.et, .et, .io, etc.
-  
-  // Standard email regex that accepts all valid TLDs
+  // Standard email regex that accepts all valid TLDs (.com, .org, .net, .gov.et, .et, etc.)
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   
   if (!emailRegex.test(trimmedEmail)) {
     return { 
       valid: false, 
-      message: "Invalid email format. Examples: name@gmail.com, admin@health.gov.et, user@company.org" 
+      message: "Invalid email format. Valid examples: name@gmail.com, admin@health.gov.et, user@company.org" 
     };
-  }
-  
-  // Check for spaces
-  if (trimmedEmail.includes(' ')) {
-    return { valid: false, message: "Email cannot contain spaces" };
   }
   
   // Check email length
@@ -98,18 +91,36 @@ const validateName = (name, fieldName) => {
   return { valid: true, message: `${fieldName} is valid` };
 };
 
-// 3. Validate Phone Number
+// 3. Validate Phone Number - Max 14 digits, accepts any country format
 const validatePhone = (phone) => {
   if (!phone) {
     return { valid: true, message: "Phone is optional" };
   }
   
-  const phoneRegex = /^(\+?251|0)?[789]\d{8}$/;
+  // Convert to string and clean (remove spaces, dashes, parentheses, plus sign)
+  const phoneStr = String(phone);
+  const cleanedPhone = phoneStr.replace(/[\s\-\(\)\+]/g, '');
   
-  if (!phoneRegex.test(phone)) {
+  // Check if contains only numbers after cleaning
+  if (!/^\d+$/.test(cleanedPhone)) {
     return { 
       valid: false, 
-      message: "Invalid phone number. Valid formats: 0912345678, +251912345678, 251912345678" 
+      message: "Phone number must contain only digits, spaces, dashes, parentheses, or plus sign" 
+    };
+  }
+  
+  // Length validation: minimum 10 digits, maximum 14 digits
+  if (cleanedPhone.length < 10) {
+    return { 
+      valid: false, 
+      message: "Phone number must be at least 10 digits" 
+    };
+  }
+  
+  if (cleanedPhone.length > 14) {
+    return { 
+      valid: false, 
+      message: "Phone number must not exceed 14 digits" 
     };
   }
   
@@ -413,7 +424,7 @@ export const createAdmin = async (req, res) => {
 
     // ==================== VALIDATION ====================
     
-    // 1. Email (.com only)
+    // 1. Email validation
     const emailValidation = validateEmail(email);
     if (!emailValidation.valid) {
       return res.status(400).json({
