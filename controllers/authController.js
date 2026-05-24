@@ -21,6 +21,7 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 // ==================== VALIDATION HELPER FUNCTIONS ====================
 
 // 1. Validate Email Format - ONLY .com domain allowed
+// 1. Validate Email Format - Accepts all valid email formats
 const validateEmail = (email) => {
   if (!email) {
     return { valid: false, message: "Email is required" };
@@ -28,19 +29,23 @@ const validateEmail = (email) => {
   
   const trimmedEmail = email.trim();
   
-  // Must contain @ and end with .com
+  // Must contain @
   if (!trimmedEmail.includes('@')) {
     return { valid: false, message: "Email must contain @ symbol" };
   }
   
-  // ⬇️⬇️⬇️ THIS IS THE CODE YOU ARE ASKING ABOUT ⬇️⬇️⬇️
-  if (!trimmedEmail.endsWith('.com')) {
+  // REMOVED the .com restriction - now accepts all valid domains
+  // Valid domains: .com, .org, .net, .gov.et, .et, .io, etc.
+  
+  // Standard email regex that accepts all valid TLDs
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  
+  if (!emailRegex.test(trimmedEmail)) {
     return { 
       valid: false, 
-      message: "Invalid email format. Email must end with .com. Examples: name@gmail.com, admin@company.com" 
+      message: "Invalid email format. Examples: name@gmail.com, admin@health.gov.et, user@company.org" 
     };
   }
-  // ⬆️⬆️⬆️ THIS IS THE CODE YOU ARE ASKING ABOUT ⬆️⬆️⬆️
   
   // Check for spaces
   if (trimmedEmail.includes(' ')) {
