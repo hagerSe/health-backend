@@ -18,6 +18,9 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 // ==================== VALIDATION HELPER FUNCTIONS ====================
 
 // 1. Validate Email Format - ONLY .com domain allowed
+// ==================== VALIDATION HELPER FUNCTIONS ====================
+
+// 1. Validate Email Format - ONLY .com domain allowed
 const validateEmail = (email) => {
   if (!email) {
     return { valid: false, message: "Email is required" };
@@ -30,12 +33,14 @@ const validateEmail = (email) => {
     return { valid: false, message: "Email must contain @ symbol" };
   }
   
+  // ⬇️⬇️⬇️ THIS IS THE CODE YOU ARE ASKING ABOUT ⬇️⬇️⬇️
   if (!trimmedEmail.endsWith('.com')) {
     return { 
       valid: false, 
       message: "Invalid email format. Email must end with .com. Examples: name@gmail.com, admin@company.com" 
     };
   }
+  // ⬆️⬆️⬆️ THIS IS THE CODE YOU ARE ASKING ABOUT ⬆️⬆️⬆️
   
   // Check for spaces
   if (trimmedEmail.includes(' ')) {
