@@ -33,12 +33,6 @@ export const protect = async (req, res, next) => {
           user = await FederalAdmin.findByPk(decoded.id, {
             attributes: { exclude: ['password'] }
           });
-          if (!user && decoded.email) {
-            user = await FederalAdmin.findOne({ 
-              where: { email: decoded.email },
-              attributes: { exclude: ['password'] }
-            });
-          }
           break;
         case 'regional':
           user = await RegionalAdmin.findByPk(decoded.id, {
@@ -94,26 +88,35 @@ export const protect = async (req, res, next) => {
         });
       }
 
-      // ✅ FIXED: Added 'type' property to req.user
+      // ✅ CORRECTED: Added both 'type' and 'userType' properties
       req.user = {
-        ...user.toJSON(),
-        type: decoded.type,        // ← ADDED THIS LINE
-        userType: decoded.type,    // ← Keep this for compatibility
-        role: decoded.role
+        id: user.id,
+        first_name: user.first_name,
+        middle_name: user.middle_name || '',
+        last_name: user.last_name,
+        email: user.email,
+        type: decoded.type,           // ← ADDED
+        userType: decoded.type,       // ← Keep for compatibility
+        role: decoded.role || user.role,
+        status: user.status,
+        is_verified: user.is_verified,
+        // Add department and other fields if they exist
+        department: user.department,
+        ward: user.ward,
+        hospital_name: user.hospital_name,
+        region_name: user.region_name,
+        zone_name: user.zone_name,
+        woreda_name: user.woreda_name,
+        kebele_name: user.kebele_name,
+        phone: user.phone,
+        gender: user.gender,
+        age: user.age
       };
       
-      if (decoded.type === 'staff') {
-        req.user.department = user.department;
-        req.user.ward = user.ward;
-        req.user.hospital_id = user.hospital_id;
-        req.user.role = user.role;
-      }
-      
       console.log('✅ Authentication successful for:', user.email);
-      console.log('   User Type:', req.user.type);
+      console.log('   User Type:', req.user.userType);
       if (user.department) console.log('   Department:', user.department);
       if (user.ward) console.log('   Ward:', user.ward);
-      if (user.role) console.log('   Role:', user.role);
       
       next();
       
@@ -133,9 +136,7 @@ export const protect = async (req, res, next) => {
   }
 };
 
-// Enhanced restrictTo that checks both userType and department
-// backend/middleware/auth.js - Update the restrictTo function
-
+// Enhanced restrictTo function
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -155,15 +156,13 @@ export const restrictTo = (...roles) => {
     // For staff users, check department and role
     if (req.user.userType === 'staff') {
       const rawDepartment = (req.user.department || '').trim();
-      const normalizedDept = rawDepartment.toLowerCase().replace(/\s+/g, '_');
       const userRole = (req.user.role || '').toLowerCase();
       
       console.log('🔐 Checking access for department:', rawDepartment, 'role:', userRole);
       console.log('🔐 Required roles:', roles);
       
       const departmentMap = {
-        'doctor': ['doctor', 'opd_doctor', 'eme_doctor', 'physician', 'consultant', 
-                   'card_office', 'card_office_staff', 'cardofffice'],  // ← ADDED card_office
+        'doctor': ['doctor', 'opd_doctor', 'eme_doctor', 'physician', 'consultant', 'card_office', 'card_office_staff', 'cardofffice'],
         'opd_doctor': ['doctor', 'opd_doctor', 'card_office', 'card_office_staff', 'cardofffice'],
         'eme_doctor': ['doctor', 'eme_doctor', 'card_office', 'card_office_staff', 'cardofffice'],
         'nurse': ['nurse', 'staff_nurse', 'anc_nurse', 'midwife'],
@@ -172,8 +171,8 @@ export const restrictTo = (...roles) => {
         'anc_midwife': ['midwife', 'anc_midwife', 'midwifery', 'nurse'],
         'triage': ['triage', 'triage_nurse'],
         'triage_nurse': ['triage', 'triage_nurse'],
-        'card_office': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],  // ← ADDED doctor
-        'cardofffice': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],   // ← ADDED doctor
+        'card_office': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],
+        'cardofffice': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],
         'lab': ['lab', 'lab_technician', 'lab_tech'],
         'lab_technician': ['lab', 'lab_technician'],
         'radiology': ['radiology', 'radiologist', 'radio'],
@@ -208,17 +207,13 @@ export const restrictTo = (...roles) => {
       }
 
       const allowedRoles = departmentMap[matchedDepartment] || [];
-      console.log('📋 Matched department:', matchedDepartment);
-      console.log('📋 Allowed roles for this department:', allowedRoles);
       
       const hasPermission = roles.some(role => 
         allowedRoles.includes(role) || 
         allowedRoles.includes(role.toLowerCase()) ||
         role === 'staff' ||
         userRole === role ||
-        userRole.includes(role) ||
-        // Special case for card_office access from doctor
-        (roles.includes('card_office') && allowedRoles.includes('doctor'))
+        userRole.includes(role)
       );
       
       if (hasPermission) {
@@ -229,20 +224,13 @@ export const restrictTo = (...roles) => {
       console.log('❌ Permission denied. Required:', roles, 'Allowed:', allowedRoles);
     }
 
-    console.log('❌ Permission denied for user:', {
-      userType: req.user.userType,
-      department: req.user.department,
-      ward: req.user.ward,
-      role: req.user.role,
-      requiredRoles: roles
-    });
-
     return res.status(403).json({ 
       success: false, 
       message: `You do not have permission to access this resource. Required: ${roles.join(', ')}` 
     });
   };
 };
+
 // Helper function to check specific ward access
 export const restrictToWard = (ward) => {
   return (req, res, next) => {
@@ -385,36 +373,26 @@ export const isMidwife = (req, res, next) => {
     });
   }
 
-  // Admin users have access
   const adminTypes = ['federal', 'regional', 'zone', 'woreda', 'kebele', 'hospital'];
   if (adminTypes.includes(req.user.userType)) {
     console.log('✅ Admin access granted for midwife route');
     return next();
   }
 
-  // Check if user is staff with midwife role or department
   if (req.user.userType === 'staff') {
     const department = (req.user.department || '').toLowerCase();
     const ward = (req.user.ward || '').toLowerCase();
     const role = (req.user.role || '').toLowerCase();
     
-    // Check if department is midwife or related
     if (department.includes('midwife') || 
         department.includes('midwifery') ||
         ward === 'anc' ||
         role === 'midwife' ||
         role.includes('midwife')) {
-      console.log('✅ Midwife access granted for:', department, 'ward:', ward, 'role:', role);
+      console.log('✅ Midwife access granted');
       return next();
     }
   }
-
-  console.log('❌ Midwife access denied for user:', {
-    userType: req.user.userType,
-    department: req.user.department,
-    ward: req.user.ward,
-    role: req.user.role
-  });
 
   return res.status(403).json({ 
     success: false, 
