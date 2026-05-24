@@ -23,71 +23,77 @@ const validateEmail = (email) => {
     return { valid: false, message: "Email is required" };
   }
   
-  // Remove any whitespace
-  email = email.trim();
+  const trimmedEmail = email.trim();
   
-  // ONLY allows .com domain at the end
-  const dotComRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.com$/;
+  // Must contain @ and end with .com
+  if (!trimmedEmail.includes('@')) {
+    return { valid: false, message: "Email must contain @ symbol" };
+  }
   
-  if (!dotComRegex.test(email)) {
+  if (!trimmedEmail.endsWith('.com')) {
     return { 
       valid: false, 
-      message: "Invalid email format. Only .com domain emails are allowed. Examples: username@gmail.com, admin@company.com" 
+      message: "Invalid email format. Email must end with .com. Examples: name@gmail.com, admin@company.com" 
     };
   }
   
+  // Check for spaces
+  if (trimmedEmail.includes(' ')) {
+    return { valid: false, message: "Email cannot contain spaces" };
+  }
+  
   // Check email length
-  if (email.length < 5) {
+  if (trimmedEmail.length < 5) {
     return { valid: false, message: "Email is too short" };
   }
   
-  if (email.length > 100) {
+  if (trimmedEmail.length > 100) {
     return { valid: false, message: "Email must be less than 100 characters" };
   }
   
-  // Check for consecutive dots (invalid)
-  if (email.includes('..')) {
+  // Check for consecutive dots
+  if (trimmedEmail.includes('..')) {
     return { valid: false, message: "Email cannot contain consecutive dots" };
   }
   
   return { valid: true, message: "Email format is valid" };
 };
 
-// 2. Validate Name (Only letters, spaces, hyphens - NO numbers or special characters)
+// 2. Validate Name (Only letters, spaces, hyphens - NO numbers)
 const validateName = (name, fieldName) => {
   if (!name || name.trim() === '') {
     return { valid: false, message: `${fieldName} is required` };
   }
   
-  // Only letters (A-Z, a-z), spaces, hyphens, and apostrophes allowed - NO NUMBERS
+  const trimmedName = name.trim();
+  
+  // Only letters, spaces, hyphens, and apostrophes allowed - NO NUMBERS
   const nameRegex = /^[A-Za-z\s\-']+$/;
   
-  if (!nameRegex.test(name)) {
+  if (!nameRegex.test(trimmedName)) {
     return { 
       valid: false, 
       message: `${fieldName} must contain only letters (A-Z, a-z). Numbers and special characters are not allowed.` 
     };
   }
   
-  if (name.length < 2) {
+  if (trimmedName.length < 2) {
     return { valid: false, message: `${fieldName} must be at least 2 characters long` };
   }
   
-  if (name.length > 50) {
+  if (trimmedName.length > 50) {
     return { valid: false, message: `${fieldName} must be less than 50 characters` };
   }
   
   return { valid: true, message: `${fieldName} is valid` };
 };
 
-// 3. Validate Phone Number (Ethiopian or international format)
+// 3. Validate Phone Number
 const validatePhone = (phone) => {
   if (!phone) {
-    return { valid: true, message: "Phone is optional" }; // Optional field
+    return { valid: true, message: "Phone is optional" };
   }
   
-  // Ethiopian phone: 09XXXXXXXX or +2519XXXXXXXX or 2519XXXXXXXX
-  // International: +XXXXXXXXXX
   const phoneRegex = /^(\+?251|0)?[789]\d{8}$/;
   
   if (!phoneRegex.test(phone)) {
@@ -159,7 +165,6 @@ const validateGender = (gender) => {
 const checkEmailInAllTables = async (email) => {
   const normalizedEmail = email.toLowerCase().trim();
   
-  // Check all tables sequentially
   const federalExists = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
   if (federalExists) return { exists: true, table: 'Federal Admin' };
   
@@ -210,7 +215,6 @@ export const login = async (req, res) => {
     let userType = null;
     let userModel = null;
 
-    // Check all tables
     user = await User.findOne({ where: { email: normalizedEmail } });
     if (user) {
       role = user.role || 'staff';
@@ -397,9 +401,9 @@ export const createAdmin = async (req, res) => {
     console.log("Type:", adminType);
     console.log("=".repeat(60));
 
-    // ==================== COMPLETE VALIDATION ====================
+    // ==================== VALIDATION ====================
     
-    // 1. Validate Email (.com only)
+    // 1. Email (.com only)
     const emailValidation = validateEmail(email);
     if (!emailValidation.valid) {
       return res.status(400).json({
@@ -409,7 +413,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 2. Validate First Name (letters only - NO numbers)
+    // 2. First Name (letters only)
     const firstNameValidation = validateName(first_name, "First name");
     if (!firstNameValidation.valid) {
       return res.status(400).json({
@@ -419,7 +423,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 3. Validate Last Name (letters only - NO numbers)
+    // 3. Last Name (letters only)
     const lastNameValidation = validateName(last_name, "Last name");
     if (!lastNameValidation.valid) {
       return res.status(400).json({
@@ -429,7 +433,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 4. Validate Middle Name (optional - letters only if provided)
+    // 4. Middle Name (optional)
     if (middle_name && middle_name.trim() !== '') {
       const middleNameValidation = validateName(middle_name, "Middle name");
       if (!middleNameValidation.valid) {
@@ -441,7 +445,7 @@ export const createAdmin = async (req, res) => {
       }
     }
 
-    // 5. Validate Password
+    // 5. Password
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.valid) {
       return res.status(400).json({
@@ -451,7 +455,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 6. Validate Phone (optional)
+    // 6. Phone
     const phoneValidation = validatePhone(phone);
     if (!phoneValidation.valid) {
       return res.status(400).json({
@@ -461,7 +465,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 7. Validate Age
+    // 7. Age
     const ageValidation = validateAge(age);
     if (!ageValidation.valid) {
       return res.status(400).json({
@@ -471,7 +475,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 8. Validate Gender
+    // 8. Gender
     const genderValidation = validateGender(gender);
     if (!genderValidation.valid) {
       return res.status(400).json({
@@ -481,7 +485,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 9. Validate Admin Type
+    // 9. Admin Type
     const validAdminTypes = ['federal', 'regional', 'zone', 'woreda', 'kebele', 'hospital', 'staff'];
     if (!adminType || !validAdminTypes.includes(adminType.toLowerCase())) {
       return res.status(400).json({
@@ -491,7 +495,7 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // 10. Check for duplicate email across all tables
+    // 10. Check duplicate email
     const normalizedEmail = email.toLowerCase().trim();
     const emailCheck = await checkEmailInAllTables(normalizedEmail);
     
@@ -503,7 +507,6 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const tokenExpires = new Date(Date.now() + 86400000);
@@ -511,7 +514,6 @@ export const createAdmin = async (req, res) => {
     let newAdmin = null;
     let responseType = adminType;
 
-    // Create admin based on type
     switch(adminType.toLowerCase()) {
       case 'federal':
         newAdmin = await FederalAdmin.create({
@@ -703,7 +705,6 @@ export const createAdmin = async (req, res) => {
 
     console.log(`✅ ${adminType} admin created successfully:`, normalizedEmail);
 
-    // Send verification email in production
     if (!isDevelopment && newAdmin) {
       const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email/${verificationToken}`;
       try {
@@ -756,7 +757,6 @@ export const checkEmailAvailability = async (req, res) => {
       });
     }
     
-    // Validate email format first (.com only)
     const emailValidation = validateEmail(email);
     if (!emailValidation.valid) {
       return res.status(400).json({
