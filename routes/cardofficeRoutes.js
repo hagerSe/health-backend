@@ -1,4 +1,4 @@
-// backend/routes/cardofficeRoutes.js
+
 import express from 'express';
 import { protect, restrictTo } from '../middleware/auth.js';
 import {
@@ -17,7 +17,8 @@ import {
   sendCardOfficeReport,
   replyToCardOfficeReport,
   markCardOfficeReportRead,
-  getHospitalAdminsForCardOffice
+  getHospitalAdminsForCardOffice,
+  getMyScheduleCardOffice  // ← ADD THIS IMPORT
 } from '../controllers/cardofficeController.js';
 import multer from 'multer';
 import path from 'path';
@@ -85,6 +86,10 @@ router.put('/profile', protect, updateCardOfficeProfile);
 
 // Change password
 router.put('/change-password', protect, changeCardOfficePassword);
+
+// ==================== SCHEDULE ROUTES ====================
+// Get schedule for logged-in card office staff
+router.get('/my-schedule', protect, getMyScheduleCardOffice);  // ← NOW THIS WILL WORK
 
 // ==================== REPORT MANAGEMENT ====================
 // Get inbox reports

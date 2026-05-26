@@ -976,3 +976,135 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     });
   }
 };
+// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
+
+// Helper function for shift display
+const getShiftDisplayNameCardOffice = (shiftType) => {
+  const shifts = {
+    morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
+    afternoon: { name: 'Afternoon', start: '14:00', end: '20:00', hours: 6 },
+    night: { name: 'Night', start: '20:00', end: '08:00', hours: 12 }
+  };
+  return shifts[shiftType] || { name: shiftType, start: '--:--', end: '--:--', hours: 0 };
+};
+
+// @desc    Get schedule for logged-in card office staff
+// @route   GET /api/cardoffice/my-schedule
+export const getMyScheduleCardOffice = async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    const staffId = req.user.id;
+    const hospitalId = req.user.hospital_id;
+
+    // Import Schedule model
+    const Schedule = (await import('../models/Schedule.js')).default;
+
+    const whereClause = {
+      staff_id: staffId,
+      hospital_id: hospitalId
+    };
+
+    // Default to next 30 days if no dates provided
+    if (start_date && end_date) {
+      whereClause.date = {
+        [Op.between]: [new Date(start_date), new Date(end_date)]
+      };
+    } else {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const thirtyDaysLater = new Date();
+      thirtyDaysLater.setDate(today.getDate() + 30);
+      whereClause.date = {
+        [Op.between]: [today, thirtyDaysLater]
+      };
+    }
+
+    const schedules = await Schedule.findAll({
+      where: whereClause,
+      order: [['date', 'ASC']]
+    });
+
+    // Process schedules
+    let totalHours = 0;
+    const processedSchedules = schedules.map(schedule => {
+      const shift = getShiftDisplayNameCardOffice(schedule.shift_type);
+      totalHours += shift.hours;
+      
+      return {
+        id: schedule.id,
+        date: schedule.date,
+        shift_type: schedule.shift_type,
+        shift_name: shift.name,
+        shift_start: shift.start,
+        shift_end: shift.end,
+        shift_hours: shift.hours,
+        ward: schedule.ward,
+        status: schedule.status
+      };
+    });
+
+    // Get today's date
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+    
+    // Get today's schedules
+    const todaySchedules = processedSchedules.filter(s => s.date === todayStr);
+    let todayHours = 0;
+    todaySchedules.forEach(s => todayHours += s.shift_hours);
+
+    // Get current week stats (Monday to Sunday)
+    const startOfWeek = new Date(today);
+    const dayOfWeek = today.getDay();
+    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    startOfWeek.setDate(today.getDate() - daysFromMonday);
+    startOfWeek.setHours(0, 0, 0, 0);
+    
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+    
+    const thisWeekSchedules = processedSchedules.filter(s => {
+      const sDate = new Date(s.date);
+      return sDate >= startOfWeek && sDate <= endOfWeek;
+    });
+    let thisWeekHours = 0;
+    thisWeekSchedules.forEach(s => thisWeekHours += s.shift_hours);
+
+    // Get next week stats
+    const startOfNextWeek = new Date(endOfWeek);
+    startOfNextWeek.setDate(endOfWeek.getDate() + 1);
+    const endOfNextWeek = new Date(startOfNextWeek);
+    endOfNextWeek.setDate(startOfNextWeek.getDate() + 6);
+    
+    const nextWeekSchedules = processedSchedules.filter(s => {
+      const sDate = new Date(s.date);
+      return sDate >= startOfNextWeek && sDate <= endOfNextWeek;
+    });
+    let nextWeekHours = 0;
+    nextWeekSchedules.forEach(s => nextWeekHours += s.shift_hours);
+
+    // Get upcoming shifts (next 7 days)
+    const nextWeekDate = new Date(today);
+    nextWeekDate.setDate(today.getDate() + 7);
+    const upcomingShifts = processedSchedules.filter(s => {
+      const sDate = new Date(s.date);
+      return sDate >= today && sDate <= nextWeekDate;
+    });
+
+    res.json({
+      success: true,
+      schedules: processedSchedules,
+      total_hours: totalHours,
+      upcoming_shifts: upcomingShifts,
+      stats: {
+        today: { shift_count: todaySchedules.length, total_hours: todayHours },
+        this_week: { shift_count: thisWeekSchedules.length, total_hours: thisWeekHours },
+        next_week: { shift_count: nextWeekSchedules.length, total_hours: nextWeekHours }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching card office schedule:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
