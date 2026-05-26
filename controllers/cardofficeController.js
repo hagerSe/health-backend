@@ -982,8 +982,8 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
+// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 
-// Helper function for shift display
 const getShiftDisplayNameCardOffice = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
@@ -1001,7 +1001,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
     const staffId = req.user.id;
     const hospitalId = req.user.hospital_id;
 
-    // Import Schedule model dynamically
+    // Dynamic import to avoid circular dependency
     const Schedule = (await import('../models/Schedule.js')).default;
     const { Op } = await import('sequelize');
 
@@ -1010,7 +1010,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
       hospital_id: hospitalId
     };
 
-    // Default to next 30 days if no dates provided
+    // Set date range
     if (start_date && end_date) {
       whereClause.date = {
         [Op.between]: [new Date(start_date), new Date(end_date)]
@@ -1025,17 +1025,15 @@ export const getMyScheduleCardOffice = async (req, res) => {
       };
     }
 
+    // Fetch schedules from database
     const schedules = await Schedule.findAll({
       where: whereClause,
       order: [['date', 'ASC']]
     });
 
-    // Process schedules
-    let totalHours = 0;
+    // Process schedules - NO MOCK DATA, only real database records
     const processedSchedules = schedules.map(schedule => {
       const shift = getShiftDisplayNameCardOffice(schedule.shift_type);
-      totalHours += shift.hours;
-      
       return {
         id: schedule.id,
         date: schedule.date,
@@ -1049,17 +1047,26 @@ export const getMyScheduleCardOffice = async (req, res) => {
       };
     });
 
-    // Get today's date
+    // Calculate total hours from actual schedules
+    const totalHours = processedSchedules.reduce((sum, s) => sum + s.shift_hours, 0);
+
+    // Get upcoming shifts (next 7 days)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
+    const nextWeekDate = new Date(today);
+    nextWeekDate.setDate(today.getDate() + 7);
     
-    // Get today's schedules
-    const todaySchedules = processedSchedules.filter(s => s.date === todayStr);
-    let todayHours = 0;
-    todaySchedules.forEach(s => todayHours += s.shift_hours);
+    const upcomingShifts = processedSchedules.filter(s => {
+      const scheduleDate = new Date(s.date);
+      return scheduleDate >= today && scheduleDate <= nextWeekDate;
+    });
 
-    // Get current week stats (Monday to Sunday)
+    // Get today's schedules
+    const todayStr = today.toISOString().split('T')[0];
+    const todaySchedules = processedSchedules.filter(s => s.date === todayStr);
+    const todayHours = todaySchedules.reduce((sum, s) => sum + s.shift_hours, 0);
+
+    // Get this week's schedules (Monday to Sunday)
     const startOfWeek = new Date(today);
     const dayOfWeek = today.getDay();
     const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
@@ -1074,16 +1081,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
       const sDate = new Date(s.date);
       return sDate >= startOfWeek && sDate <= endOfWeek;
     });
-    let thisWeekHours = 0;
-    thisWeekSchedules.forEach(s => thisWeekHours += s.shift_hours);
-
-    // Get upcoming shifts (next 7 days)
-    const nextWeekDate = new Date(today);
-    nextWeekDate.setDate(today.getDate() + 7);
-    const upcomingShifts = processedSchedules.filter(s => {
-      const sDate = new Date(s.date);
-      return sDate >= today && sDate <= nextWeekDate;
-    });
+    const thisWeekHours = thisWeekSchedules.reduce((sum, s) => sum + s.shift_hours, 0);
 
     res.json({
       success: true,
@@ -1092,14 +1090,18 @@ export const getMyScheduleCardOffice = async (req, res) => {
       upcoming_shifts: upcomingShifts,
       stats: {
         today: { shift_count: todaySchedules.length, total_hours: todayHours },
-        this_week: { shift_count: thisWeekSchedules.length, total_hours: thisWeekHours },
-        upcoming: { shift_count: upcomingShifts.length }
+        this_week: { shift_count: thisWeekSchedules.length, total_hours: thisWeekHours }
       }
     });
   } catch (error) {
     console.error('Error fetching card office schedule:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      schedules: [],  // Empty array on error
+      total_hours: 0
+    });
   }
 };
 
-// END OF FILE
+// END OF SCHEDULE FUNCTIONS
