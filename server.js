@@ -416,6 +416,9 @@ app.use('/api/cardoffice', cardofficeRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/ward', wardRoutes);
 
+// Serve uploaded files (radiology images, message attachments, etc.)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Socket debug endpoint
 app.get('/api/socket/debug', (req, res) => {
   const rooms = io.sockets.adapter.rooms;

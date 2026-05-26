@@ -11,8 +11,44 @@ import Bed from '../models/Bed.js';
 import Admission from '../models/Admission.js';
 import Referral from '../models/Referral.js';
 import Prescription from '../models/Prescription.js';
+import Schedule from '../models/Schedule.js';
 import { Op } from 'sequelize';
 import sequelize from '../config/database.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const persistReportAttachments = async (files = [], { userId, category = 'reports' } = {}) => {
+  if (!files || files.length === 0) return [];
+
+  const uploadsRoot = path.join(__dirname, '..', 'uploads');
+  const targetDir = path.join(uploadsRoot, category, `user_${userId || 'unknown'}`);
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+  const saved = [];
+  for (const f of files) {
+    const timestamp = Date.now();
+    const rand = Math.random().toString(36).slice(2, 8);
+    const safeName = (f.originalname || 'file')
+      .replace(/[^a-zA-Z0-9.\-_]/g, '_')
+      .slice(-120);
+    const filename = `${timestamp}-${rand}-${safeName}`;
+    const filePath = path.join(targetDir, filename);
+    fs.writeFileSync(filePath, f.buffer);
+
+    saved.push({
+      url: `/uploads/${category}/user_${userId || 'unknown'}/${filename}`,
+      filename,
+      originalName: f.originalname,
+      size: f.size,
+      mimeType: f.mimetype
+    });
+  }
+  return saved;
+};
 
 // Valid wards from Bed model ENUM
 const VALID_WARDS = ['OPD', 'EME', 'ANC'];
@@ -1147,6 +1183,14 @@ export const referPatient = async (req, res) => {
       signature, referral_notes 
     } = req.body;
 
+    // External referral feature removed (backend hard-block)
+    if (referral_type === 'external') {
+      return res.status(400).json({
+        success: false,
+        message: 'External referral is not supported.'
+      });
+    }
+
     if (referral_type === 'internal' && !VALID_WARDS.includes(destination)) {
       return res.status(400).json({ 
         success: false, 
@@ -1286,9 +1330,11 @@ export const getDischargedPatients = async (req, res) => {
         id: data.id,
         patient_name: `${data.first_name || ''} ${data.last_name || ''}`.trim(),
         card_number: data.card_number,
-        diagnosis: dischargeSummary.diagnosis?.primary || 'Not recorded',
-        doctor_name: data.doctor_name || 'Unknown',
+        admission_date: data.createdAt,
         discharge_date: data.updatedAt,
+        final_diagnosis: dischargeSummary.final_diagnosis || dischargeSummary.diagnosis?.primary || 'Not recorded',
+        diagnosis: dischargeSummary.diagnosis?.primary || dischargeSummary.final_diagnosis || 'Not recorded',
+        doctor_name: data.doctor_name || 'Unknown',
         discharge_location: dischargeSummary.discharge_location || 'Home',
         discharge_notes: dischargeSummary.notes || '',
         status: data.status,
@@ -1560,12 +1606,22 @@ export const sendDoctorReport = async (req, res) => {
       
       recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
       recipientHospitalId = recipient.id; // ✅ Store hospital admin ID
+    } else if (recipient_type === 'staff') {
+      recipient = await HospitalStaff.findByPk(recipient_id);
+      if (!recipient) {
+        return res.status(404).json({ success: false, message: "Staff recipient not found" });
+      }
+      // Only within same hospital
+      if (String(recipient.hospital_id) !== String(sender.hospital_id)) {
+        return res.status(403).json({ success: false, message: "Cannot message staff from another hospital" });
+      }
+      recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+      recipientHospitalId = sender.hospital_id;
     } else {
-      return res.status(400).json({
-        success: false,
-        message: "Doctors can only send reports to hospital admin"
-      });
+      return res.status(400).json({ success: false, message: "Invalid recipient_type" });
     }
+
+    const attachments = await persistReportAttachments(req.files || [], { userId: sender.id, category: 'reports' });
 
     const date = new Date();
     const year = date.getFullYear();
@@ -1606,13 +1662,15 @@ export const sendDoctorReport = async (req, res) => {
       sender_hospital_id: sender.hospital_id, // ✅ ADD THIS
       
       recipient_id: recipient.id,
-      recipient_type: 'hospital',
+      recipient_type: recipient_type === 'hospital_admin' ? 'hospital' : 'staff',
       recipient_first_name: recipient.first_name,
       recipient_middle_name: recipient.middle_name,
       recipient_last_name: recipient.last_name,
       recipient_full_name: recipientFullName,
       recipient_hospital: recipient.hospital_name,
       recipient_hospital_id: recipientHospitalId, // ✅ ADD THIS
+
+      attachments,
       
       sent_at: new Date(),
       last_activity_at: new Date()
@@ -1780,6 +1838,7 @@ export const replyToDoctorReport = async (req, res) => {
       
       parent_report_id: parentReport.id,
       thread_id: parentReport.thread_id || parentReport.id,
+      attachments: await persistReportAttachments(req.file ? [req.file] : [], { userId: sender.id, category: 'reports' }),
       sent_at: new Date(),
       last_activity_at: new Date()
     });
@@ -1831,6 +1890,58 @@ export const replyToDoctorReport = async (req, res) => {
       success: false, 
       message: error.message 
     });
+  }
+};
+
+// ==================== SCHEDULE (DOCTOR VIEW ALL STAFF) ====================
+// @desc    Doctor: view all staff schedules with filters
+// @route   GET /api/doctor/staff-schedules
+// @access  Private
+export const getAllStaffSchedules = async (req, res) => {
+  try {
+    const hospitalId = req.user.hospital_id;
+    const {
+      date,
+      from,
+      to,
+      role,
+      department,
+      ward,
+      limit = 500
+    } = req.query;
+
+    const where = { hospital_id: hospitalId };
+    if (date) where.date = date;
+    if (from || to) {
+      where.date = {};
+      if (from) where.date[Op.gte] = from;
+      if (to) where.date[Op.lte] = to;
+    }
+    if (department && department !== 'all') where.department = department;
+    if (ward && ward !== 'all') where.ward = ward;
+
+    const schedules = await Schedule.findAll({
+      where,
+      order: [['date', 'ASC'], ['shift_type', 'ASC']],
+      limit: Math.min(parseInt(limit), 2000)
+    });
+
+    // Optional: filter by role using HospitalStaff.role (if provided)
+    let filtered = schedules.map(s => s.toJSON());
+    if (role && role !== 'all') {
+      const staffIds = [...new Set(filtered.map(s => s.staff_id))];
+      const staff = await HospitalStaff.findAll({
+        where: { id: { [Op.in]: staffIds }, hospital_id: hospitalId },
+        attributes: ['id', 'role']
+      });
+      const roleMap = new Map(staff.map(x => [x.id, x.role]));
+      filtered = filtered.filter(s => (roleMap.get(s.staff_id) || '').toLowerCase() === String(role).toLowerCase());
+    }
+
+    res.json({ success: true, schedules: filtered });
+  } catch (error) {
+    console.error('Get all staff schedules error:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -2429,23 +2540,15 @@ export const getDoctorSchedule = async (req, res) => {
     const { days = 60 } = req.query;
     
     // Try to get from Schedule table
-    let schedules = [];
-    try {
-      const Schedule = require('../models/Schedule.js').default;
-      
-      schedules = await Schedule.findAll({
-        where: {
-          staff_id: doctorId,
-          hospital_id: hospitalId,
-          date: { [Op.gte]: new Date() }
-        },
-        order: [['date', 'ASC']],
-        limit: parseInt(days)
-      });
-    } catch (err) {
-      // Schedule table might not exist yet
-      console.log('Schedule table not found');
-    }
+    const schedules = await Schedule.findAll({
+      where: {
+        staff_id: doctorId,
+        hospital_id: hospitalId,
+        date: { [Op.gte]: new Date() }
+      },
+      order: [['date', 'ASC']],
+      limit: parseInt(days)
+    });
     
     const getShiftDisplay = (shiftType) => {
       const shifts = {

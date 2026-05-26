@@ -36,7 +36,8 @@ import {
   setReportReminder,
   getDoctorReminders,
   // ==================== SCHEDULE CONTROLLER IMPORT ====================
-  getDoctorSchedule           // <-- ADD THIS LINE
+  getDoctorSchedule,          // <-- ADD THIS LINE
+  getAllStaffSchedules
 } from '../controllers/doctorController.js';
 import { protect, restrictTo, isDoctor } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
@@ -67,6 +68,7 @@ router.get('/check-new-results', restrictTo('doctor', 'staff'), checkNewResults)
 
 // ==================== SCHEDULE ROUTE ====================
 router.get('/my-schedule', protect, restrictTo('doctor', 'staff'), getDoctorSchedule);
+router.get('/staff-schedules', protect, restrictTo('doctor', 'staff'), getAllStaffSchedules);
 
 // ==================== REPORT ROUTES FOR DOCTORS ====================
 router.get('/reports/inbox', restrictTo('doctor', 'staff'), getDoctorReportsInbox);

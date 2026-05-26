@@ -1987,15 +1987,7 @@ export const getMySchedule = async (req, res) => {
   }
 };
 
-// Helper functions
-const getShiftDisplayName = (shiftType) => {
-  const shifts = {
-    morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
-    afternoon: { name: 'Afternoon', start: '14:00', end: '20:00', hours: 6 },
-    night: { name: 'Night', start: '20:00', end: '08:00', hours: 12 }
-  };
-  return shifts[shiftType] || { name: shiftType, start: '--:--', end: '--:--', hours: 0 };
-};
+// Helper functions (duplicate definition removed)
 
 const getWeekNumber = (date) => {
   const d = new Date(date);

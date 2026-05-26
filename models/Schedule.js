@@ -1,4 +1,3 @@
-// models/Schedule.js
 import { DataTypes } from "sequelize";
 import sequelize from "../config/database.js";
 
@@ -48,12 +47,5 @@ const Schedule = sequelize.define("Schedule", {
   tableName: "schedules",
   timestamps: true
 });
-
-Schedule.associate = (models) => {
-  Schedule.belongsTo(models.HospitalStaff, {
-    foreignKey: 'staff_id',
-    as: 'staff'
-  });
-};
 
 export default Schedule;
