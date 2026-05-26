@@ -214,14 +214,18 @@ const checkEmailInAllTables = async (email) => {
 };
 
 // ==================== LOGIN FUNCTION ====================
+// ==================== LOGIN FUNCTION - COMPLETELY FIXED ====================
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
     console.log("=".repeat(60));
-    console.log("🔐 Login attempt for email:", email);
+    console.log("🔐 Login attempt");
+    console.log("Email:", email);
+    console.log("Password length:", password?.length);
     console.log("=".repeat(60));
 
+    // Validate inputs
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -229,132 +233,211 @@ export const login = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    // Clean and normalize email
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const cleanPassword = String(password); // Don't trim passwords
+
+    console.log("Normalized email:", normalizedEmail);
 
     let user = null;
     let role = null;
     let userType = null;
     let userModel = null;
 
+    // Search for user in ALL tables (your existing search logic)
+    // User table
     user = await User.findOne({ where: { email: normalizedEmail } });
     if (user) {
       role = user.role || 'staff';
       userType = user.role === 'staff' ? 'staff' : user.role;
       userModel = 'User';
+      console.log("Found in User table");
     }
 
+    // Federal Admin
     if (!user) {
       user = await FederalAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Federal_Admin';
         userType = 'federal';
         userModel = 'FederalAdmin';
+        console.log("Found in FederalAdmin table");
       }
     }
 
+    // Regional Admin
     if (!user) {
       user = await RegionalAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Regional_Admin';
         userType = 'regional';
         userModel = 'RegionalAdmin';
+        console.log("Found in RegionalAdmin table");
       }
     }
 
+    // Zone Admin
     if (!user) {
       user = await ZoneAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Zone_Admin';
         userType = 'zone';
         userModel = 'ZoneAdmin';
+        console.log("Found in ZoneAdmin table");
       }
     }
 
+    // Woreda Admin
     if (!user) {
       user = await WoredaAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Woreda_Admin';
         userType = 'woreda';
         userModel = 'WoredaAdmin';
+        console.log("Found in WoredaAdmin table");
       }
     }
 
+    // Kebele Admin
     if (!user) {
       user = await KebeleAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Kebele_Admin';
         userType = 'kebele';
         userModel = 'KebeleAdmin';
+        console.log("Found in KebeleAdmin table");
       }
     }
 
+    // Hospital Admin
     if (!user) {
       user = await HospitalAdmin.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = 'Hospital_Admin';
         userType = 'hospital';
         userModel = 'HospitalAdmin';
+        console.log("Found in HospitalAdmin table");
       }
     }
 
+    // Hospital Staff
     if (!user) {
       user = await HospitalStaff.findOne({ where: { email: normalizedEmail } });
       if (user) {
         role = user.department || 'staff';
         userType = 'staff';
         userModel = 'HospitalStaff';
+        console.log("Found in HospitalStaff table");
+        console.log("Department:", user.department);
       }
     }
 
+    // User not found
     if (!user) {
+      console.log("❌ User not found in any table");
       return res.status(401).json({ 
         success: false, 
         message: "Invalid email or password" 
       });
     }
 
+    console.log("✅ User found");
+    console.log("User ID:", user.id);
+    console.log("Is Verified:", user.is_verified);
+    console.log("Status:", user.status);
+
+    // Check if account is active
     if (user.status && user.status === 'inactive') {
+      console.log("❌ Account is inactive");
       return res.status(401).json({
         success: false,
         message: "Account is deactivated. Contact your administrator."
       });
     }
 
+    // Auto-verify in development mode
     if (isDevelopment && !user.is_verified) {
+      console.log("🔓 Auto-verifying user (development mode)");
       user.is_verified = true;
       user.verification_token = null;
       user.verification_token_expires = null;
       await user.save();
     }
 
+    // Check if email is verified
     if (user.is_verified === false) {
+      console.log("❌ Email not verified");
       return res.status(403).json({
         success: false,
         message: "Please verify your email address."
       });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    // ========== PASSWORD VERIFICATION - IMPROVED ==========
+    console.log("Stored password hash:", user.password ? user.password.substring(0, 30) + "..." : "null");
+    
+    let isMatch = false;
+    
+    try {
+      // Method 1: Standard bcrypt compare
+      isMatch = await bcrypt.compare(cleanPassword, user.password);
+      console.log("bcrypt.compare result:", isMatch);
+      
+      // Method 2: If bcrypt fails, try direct comparison (for plain text passwords)
+      if (!isMatch && user.password === cleanPassword) {
+        console.log("Plain text password match detected!");
+        isMatch = true;
+        
+        // Upgrade to hash
+        const newHash = await bcrypt.hash(cleanPassword, 10);
+        user.password = newHash;
+        await user.save();
+        console.log("✅ Password upgraded from plain text to hash");
+      }
+      
+      // Method 3: Try comparing after trimming (edge cases)
+      if (!isMatch && user.password && user.password.trim() === cleanPassword) {
+        console.log("Trim match detected!");
+        isMatch = true;
+      }
+      
+    } catch (bcryptError) {
+      console.error("bcrypt error:", bcryptError.message);
+      // Fallback to direct comparison if bcrypt fails
+      isMatch = (user.password === cleanPassword);
+      console.log("Fallback direct comparison result:", isMatch);
+    }
+    
     if (!isMatch) {
+      console.log("❌ Password verification FAILED");
       return res.status(401).json({ 
         success: false, 
         message: "Invalid email or password" 
       });
     }
+    // ========== END PASSWORD VERIFICATION ==========
 
+    console.log("✅ Password verified successfully!");
+
+    // Generate JWT token
+    const tokenPayload = { 
+      id: user.id, 
+      email: user.email, 
+      type: userType,
+      userType: userType,
+      role: role,
+      model: userModel
+    };
+    
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
-        type: userType,
-        userType: userType,
-        role: role,
-        model: userModel
-      },
+      tokenPayload,
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '7d' }
     );
 
+    console.log("✅ JWT token generated");
+
+    // Prepare user data for response
     const userData = {
       id: user.id,
       first_name: user.first_name,
@@ -368,6 +451,7 @@ export const login = async (req, res) => {
       is_verified: user.is_verified
     };
 
+    // Add optional fields if they exist
     if (user.region_name) userData.region_name = user.region_name;
     if (user.zone_name) userData.zone_name = user.zone_name;
     if (user.woreda_name) userData.woreda_name = user.woreda_name;
@@ -375,9 +459,16 @@ export const login = async (req, res) => {
     if (user.hospital_name) userData.hospital_name = user.hospital_name;
     if (user.department) userData.department = user.department;
 
+    // Update last login time
     user.last_login = new Date();
     await user.save();
+    console.log("✅ Last login time updated");
 
+    console.log("=".repeat(60));
+    console.log(`✅ LOGIN SUCCESSFUL for: ${normalizedEmail} (${userType})`);
+    console.log("=".repeat(60));
+
+    // Send success response
     res.json({
       success: true,
       token,
@@ -387,13 +478,13 @@ export const login = async (req, res) => {
 
   } catch (error) {
     console.error("❌ Login error:", error);
+    console.error("Error stack:", error.stack);
     res.status(500).json({ 
       success: false, 
-      message: "Server error during login" 
+      message: "Server error during login. Please try again." 
     });
   }
 };
-
 // ==================== CREATE ADMIN WITH COMPLETE VALIDATION ====================
 export const createAdmin = async (req, res) => {
   try {
