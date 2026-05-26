@@ -979,6 +979,9 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 
 // Helper function for shift display
+// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
+
+// Helper function for shift display
 const getShiftDisplayNameCardOffice = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
@@ -996,8 +999,9 @@ export const getMyScheduleCardOffice = async (req, res) => {
     const staffId = req.user.id;
     const hospitalId = req.user.hospital_id;
 
-    // Import Schedule model
+    // Import Schedule model dynamically
     const Schedule = (await import('../models/Schedule.js')).default;
+    const { Op } = await import('sequelize');
 
     const whereClause = {
       staff_id: staffId,
@@ -1071,19 +1075,6 @@ export const getMyScheduleCardOffice = async (req, res) => {
     let thisWeekHours = 0;
     thisWeekSchedules.forEach(s => thisWeekHours += s.shift_hours);
 
-    // Get next week stats
-    const startOfNextWeek = new Date(endOfWeek);
-    startOfNextWeek.setDate(endOfWeek.getDate() + 1);
-    const endOfNextWeek = new Date(startOfNextWeek);
-    endOfNextWeek.setDate(startOfNextWeek.getDate() + 6);
-    
-    const nextWeekSchedules = processedSchedules.filter(s => {
-      const sDate = new Date(s.date);
-      return sDate >= startOfNextWeek && sDate <= endOfNextWeek;
-    });
-    let nextWeekHours = 0;
-    nextWeekSchedules.forEach(s => nextWeekHours += s.shift_hours);
-
     // Get upcoming shifts (next 7 days)
     const nextWeekDate = new Date(today);
     nextWeekDate.setDate(today.getDate() + 7);
@@ -1100,7 +1091,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
       stats: {
         today: { shift_count: todaySchedules.length, total_hours: todayHours },
         this_week: { shift_count: thisWeekSchedules.length, total_hours: thisWeekHours },
-        next_week: { shift_count: nextWeekSchedules.length, total_hours: nextWeekHours }
+        upcoming: { shift_count: upcomingShifts.length }
       }
     });
   } catch (error) {
