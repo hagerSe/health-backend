@@ -43,7 +43,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -82,4 +82,4 @@ router.put('/reports/:id/read', protect, markCardOfficeReportRead);
 router.get('/hospital-admins', protect, getHospitalAdminsForCardOffice);
 
 export default router;
-// END OF FILE - NO REACT CODE BELOW THIS LINE
+// END OF FILE - NOTHING AFTER THIS LINE
