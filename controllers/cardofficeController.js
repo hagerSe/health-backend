@@ -5,8 +5,15 @@ import Notification from '../models/Notification.js';
 import HospitalStaff from '../models/HospitalStaff.js';
 import HospitalAdmin from '../models/HospitalAdmin.js';
 import Report from '../models/Report.js';
+import Schedule from '../models/Schedule.js';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
+
+// ==================== HELPER FUNCTION TO GET HOSPITAL ID ====================
+const getHospitalId = (req) => {
+  // Try both possible field names from the JWT token
+  return req.user?.hospitalId || req.user?.hospital_id || req.user?.hospital?.id;
+};
 
 // ==================== HELPER FUNCTION TO GENERATE VISIT NUMBER ====================
 const generateVisitNumber = async () => {
@@ -52,6 +59,14 @@ export const registerPatient = async (req, res) => {
       phone
     } = req.body;
 
+    const hospitalId = getHospitalId(req);
+    if (!hospitalId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Hospital ID not found in user token'
+      });
+    }
+
     if (!first_name || !last_name || !age || !gender) {
       return res.status(400).json({
         success: false,
@@ -87,7 +102,7 @@ export const registerPatient = async (req, res) => {
       age,
       gender,
       phone,
-      hospital_id: req.user.hospital_id,
+      hospital_id: hospitalId,
       status: 'in_triage',
       registered_at: new Date(),
       registered_by: req.user.full_name,
@@ -98,7 +113,7 @@ export const registerPatient = async (req, res) => {
     
     await Visit.create({
       patient_id: patient.id,
-      hospital_id: req.user.hospital_id,
+      hospital_id: hospitalId,
       visit_number: visitNumber,
       visit_type: 'OPD',
       status: 'active',
@@ -108,7 +123,7 @@ export const registerPatient = async (req, res) => {
     await Notification.create({
       recipient_id: patient.id,
       recipient_type: 'triage_nurse',
-      hospital_id: req.user.hospital_id,
+      hospital_id: hospitalId,
       title: 'New Patient Registered',
       message: `Patient ${first_name} ${last_name} is waiting for triage.`,
       type: 'new_patient',
@@ -126,7 +141,7 @@ export const registerPatient = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      const triageRoom = `hospital_${req.user.hospital_id}_triage`;
+      const triageRoom = `hospital_${hospitalId}_triage`;
       console.log(`📢 Emitting to triage room: ${triageRoom}`);
       
       io.to(triageRoom).emit('new_patient_registered', {
@@ -138,10 +153,10 @@ export const registerPatient = async (req, res) => {
         phone,
         status: 'in_triage',
         registered_at: new Date(),
-        hospital_id: req.user.hospital_id
+        hospital_id: hospitalId
       });
 
-      const cardOfficeRoom = `hospital_${req.user.hospital_id}_cardoffice`;
+      const cardOfficeRoom = `hospital_${hospitalId}_cardoffice`;
       io.to(cardOfficeRoom).emit('patient_registered', {
         patient_id: patient.id,
         card_number: patient.card_number,
@@ -177,9 +192,14 @@ export const registerPatient = async (req, res) => {
 export const searchPatients = async (req, res) => {
   try {
     const { query } = req.query;
+    const hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID not found' });
+    }
     
     const whereClause = {
-      hospital_id: req.user.hospital_id
+      hospital_id: hospitalId
     };
 
     if (query) {
@@ -213,10 +233,12 @@ export const searchPatients = async (req, res) => {
 // ==================== GET PATIENT BY ID ====================
 export const getPatientById = async (req, res) => {
   try {
+    const hospitalId = getHospitalId(req);
+    
     const patient = await Patient.findOne({
       where: {
         id: req.params.id,
-        hospital_id: req.user.hospital_id
+        hospital_id: hospitalId
       }
     });
 
@@ -245,11 +267,12 @@ export const getPatientById = async (req, res) => {
 export const sendToTriage = async (req, res) => {
   try {
     const { patientId, reason } = req.body;
+    const hospitalId = getHospitalId(req);
 
     const patient = await Patient.findOne({
       where: {
         id: patientId,
-        hospital_id: req.user.hospital_id
+        hospital_id: hospitalId
       }
     });
 
@@ -267,7 +290,7 @@ export const sendToTriage = async (req, res) => {
     
     await Visit.create({
       patient_id: patient.id,
-      hospital_id: req.user.hospital_id,
+      hospital_id: hospitalId,
       visit_number: visitNumber,
       visit_type: 'Follow-up',
       status: 'active',
@@ -279,7 +302,7 @@ export const sendToTriage = async (req, res) => {
     await Notification.create({
       recipient_id: patient.id,
       recipient_type: 'triage_nurse',
-      hospital_id: req.user.hospital_id,
+      hospital_id: hospitalId,
       title: 'Returning Patient',
       message: `Patient ${patient.first_name} ${patient.last_name} has returned. Reason: ${reason}`,
       type: 'return_patient',
@@ -296,7 +319,7 @@ export const sendToTriage = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      io.to(`hospital_${req.user.hospital_id}_triage`).emit('returning_patient', {
+      io.to(`hospital_${hospitalId}_triage`).emit('returning_patient', {
         patient_id: patient.id,
         card_number: patient.card_number,
         patient_name: `${patient.first_name} ${patient.middle_name || ''} ${patient.last_name}`,
@@ -320,8 +343,10 @@ export const sendToTriage = async (req, res) => {
 // ==================== GET RECENT PATIENTS ====================
 export const getRecentPatients = async (req, res) => {
   try {
+    const hospitalId = getHospitalId(req);
+    
     const patients = await Patient.findAll({
-      where: { hospital_id: req.user.hospital_id },
+      where: { hospital_id: hospitalId },
       order: [['registered_at', 'DESC']],
       limit: 20
     });
@@ -340,7 +365,11 @@ export const getRecentPatients = async (req, res) => {
 // ==================== GET DASHBOARD STATS ====================
 export const getCardOfficeStats = async (req, res) => {
   try {
-    const hospitalId = req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID not found' });
+    }
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -390,11 +419,12 @@ export const getCardOfficeStats = async (req, res) => {
 export const updatePatient = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, phone } = req.body;
+    const hospitalId = getHospitalId(req);
 
     const patient = await Patient.findOne({
       where: {
         id: req.params.id,
-        hospital_id: req.user.hospital_id
+        hospital_id: hospitalId
       }
     });
 
@@ -533,7 +563,6 @@ export const changeCardOfficePassword = async (req, res) => {
 // ==================== REPORT MANAGEMENT ====================
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
-    // Using Sequelize ORM instead of raw SQL to avoid enum issues
     const reports = await Report.findAll({
       where: {
         recipient_id: req.user.id,
@@ -550,7 +579,6 @@ export const getCardOfficeReportsInbox = async (req, res) => {
       }
     });
     
-    // Manually fetch sender info
     const reportsWithSender = await Promise.all(reports.map(async (report) => {
       const sender = await HospitalStaff.findByPk(report.sender_id, {
         attributes: ['first_name', 'last_name', 'email']
@@ -585,7 +613,6 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
       order: [['sent_at', 'DESC']]
     });
     
-    // Manually fetch recipient info
     const reportsWithRecipient = await Promise.all(reports.map(async (report) => {
       let recipientFullName = '';
       let recipientHospitalName = '';
@@ -603,7 +630,6 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
         }
       }
       
-      // Count attachments
       const attachmentCount = report.attachments?.length || 0;
       
       return {
@@ -672,7 +698,6 @@ export const sendCardOfficeReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
 
-    // Handle attachments
     let attachments = [];
     if (req.files && req.files.length > 0) {
       attachments = req.files.map(file => ({
@@ -927,27 +952,31 @@ export const markCardOfficeReportRead = async (req, res) => {
   }
 };
 
-// backend/controllers/cardofficeController.js
-// Replace ONLY this function at the bottom of your file:
-
+// ==================== GET HOSPITAL ADMINS FOR CARD OFFICE ====================
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
-    console.log('🏥 Fetching hospital admins for hospital:', req.user.hospital_id);
+    const hospitalId = getHospitalId(req);
+    console.log('🏥 Fetching hospital admins for hospital:', hospitalId);
     
-    // Try different possible column names
+    if (!hospitalId) {
+      return res.json({ 
+        success: true, 
+        admins: [], 
+        message: 'No hospital ID found in token' 
+      });
+    }
+    
     let hospitalAdmins;
     
-    // First try with 'hospital_id'
     try {
       hospitalAdmins = await HospitalAdmin.findAll({
-        where: { hospital_id: req.user.hospital_id },
+        where: { hospital_id: hospitalId },
         attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
       });
     } catch (error) {
-      // If 'hospital_id' fails, try 'id' (some models use id as hospital reference)
       console.log('Trying alternative query...');
       hospitalAdmins = await HospitalAdmin.findAll({
-        where: { id: req.user.hospital_id },
+        where: { id: hospitalId },
         attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
       });
     }
@@ -968,7 +997,6 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    // Return empty array instead of error to prevent frontend crash
     res.json({ 
       success: true, 
       admins: [],
@@ -976,16 +1004,8 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     });
   }
 };
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-
-// Helper function for shift display
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-
 const getShiftDisplayName = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
@@ -1001,11 +1021,18 @@ export const getMyScheduleCardOffice = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     const staffId = req.user.id;
-    const hospitalId = req.user.hospital_id;
-
-    // Dynamic import to avoid circular dependency
-    const Schedule = (await import('../models/Schedule.js')).default;
-    const { Op } = await import('sequelize');
+    const hospitalId = getHospitalId(req);
+    
+    console.log('📅 Fetching schedule for staff:', staffId, 'hospital:', hospitalId);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID not found in user token',
+        schedules: [],
+        total_hours: 0
+      });
+    }
 
     const whereClause = {
       staff_id: staffId,
@@ -1032,6 +1059,8 @@ export const getMyScheduleCardOffice = async (req, res) => {
       where: whereClause,
       order: [['date', 'ASC']]
     });
+
+    console.log(`📅 Found ${schedules.length} schedules for staff ${staffId}`);
 
     // Process schedules
     const processedSchedules = schedules.map(schedule => {
@@ -1105,4 +1134,3 @@ export const getMyScheduleCardOffice = async (req, res) => {
     });
   }
 };
-// END OF SCHEDULE FUNCTIONS
