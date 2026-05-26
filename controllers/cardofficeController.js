@@ -32,10 +32,9 @@ const generateVisitNumber = async () => {
     
     const sequence = String(todayCount + 1).padStart(4, '0');
     const visitNumber = `VIS-${dateStr}-${sequence}`;
-    console.log('✅ Generated visit number:', visitNumber);
     return visitNumber;
   } catch (error) {
-    console.error('❌ Error generating visit number:', error);
+    console.error('Error generating visit number:', error);
     return `VIS-${Date.now()}`;
   }
 };
@@ -127,8 +126,6 @@ export const registerPatient = async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       const triageRoom = `hospital_${req.user.hospital_id}_triage`;
-      console.log(`📢 Emitting to triage room: ${triageRoom}`);
-      
       io.to(triageRoom).emit('new_patient_registered', {
         patient_id: patient.id,
         card_number: patient.card_number,
@@ -533,7 +530,7 @@ export const changeCardOfficePassword = async (req, res) => {
 // ==================== REPORT MANAGEMENT ====================
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
-    // Using Sequelize ORM instead of raw SQL to avoid enum issues
+    // Get reports where this staff member is the recipient
     const reports = await Report.findAll({
       where: {
         recipient_id: req.user.id,
@@ -550,17 +547,33 @@ export const getCardOfficeReportsInbox = async (req, res) => {
       }
     });
     
-    // Manually fetch sender info
+    // Fetch sender info for each report
     const reportsWithSender = await Promise.all(reports.map(async (report) => {
-      const sender = await HospitalStaff.findByPk(report.sender_id, {
-        attributes: ['first_name', 'last_name', 'email']
-      });
+      let senderFullName = 'Unknown';
+      let senderFirstName = '';
+      let senderLastName = '';
+      
+      if (report.sender_type === 'hospital') {
+        const admin = await HospitalAdmin.findByPk(report.sender_id);
+        if (admin) {
+          senderFirstName = admin.first_name || '';
+          senderLastName = admin.last_name || '';
+          senderFullName = `${senderFirstName} ${senderLastName}`.trim();
+        }
+      } else if (report.sender_type === 'staff') {
+        const staff = await HospitalStaff.findByPk(report.sender_id);
+        if (staff) {
+          senderFirstName = staff.first_name || '';
+          senderLastName = staff.last_name || '';
+          senderFullName = `${senderFirstName} ${senderLastName}`.trim();
+        }
+      }
+      
       return {
         ...report.toJSON(),
-        sender_first_name: sender?.first_name || 'Unknown',
-        sender_last_name: sender?.last_name || '',
-        sender_email: sender?.email || '',
-        sender_full_name: sender ? `${sender.first_name} ${sender.last_name}`.trim() : 'Unknown'
+        sender_first_name: senderFirstName,
+        sender_last_name: senderLastName,
+        sender_full_name: senderFullName
       };
     }));
     
@@ -585,7 +598,7 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
       order: [['sent_at', 'DESC']]
     });
     
-    // Manually fetch recipient info
+    // Fetch recipient info for each report
     const reportsWithRecipient = await Promise.all(reports.map(async (report) => {
       let recipientFullName = '';
       let recipientHospitalName = '';
@@ -593,22 +606,21 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
       if (report.recipient_type === 'hospital') {
         const admin = await HospitalAdmin.findByPk(report.recipient_id);
         if (admin) {
-          recipientFullName = `${admin.first_name} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name}`.trim();
+          recipientFullName = `${admin.first_name || ''} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name || ''}`.trim();
           recipientHospitalName = admin.hospital_name || '';
         }
       } else if (report.recipient_type === 'staff') {
         const staff = await HospitalStaff.findByPk(report.recipient_id);
         if (staff) {
-          recipientFullName = `${staff.first_name} ${staff.middle_name ? staff.middle_name + ' ' : ''}${staff.last_name}`.trim();
+          recipientFullName = `${staff.first_name || ''} ${staff.middle_name ? staff.middle_name + ' ' : ''}${staff.last_name || ''}`.trim();
         }
       }
       
-      // Count attachments
       const attachmentCount = report.attachments?.length || 0;
       
       return {
         ...report.toJSON(),
-        recipient_full_name: recipientFullName,
+        recipient_full_name: recipientFullName || 'Unknown',
         recipient_hospital_name: recipientHospitalName,
         attachment_count: attachmentCount
       };
@@ -642,14 +654,14 @@ export const sendCardOfficeReport = async (req, res) => {
     if (recipient_type === 'hospital') {
       recipient = await HospitalAdmin.findByPk(recipient_id);
       if (recipient) {
-        recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+        recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientHospitalId = recipient.id;
         recipientHospitalName = recipient.hospital_name || '';
       }
     } else if (recipient_type === 'staff') {
       recipient = await HospitalStaff.findByPk(recipient_id);
       if (recipient) {
-        recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+        recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientHospitalId = recipient.hospital_id;
         recipientHospitalName = recipient.hospital_name || '';
       }
@@ -672,7 +684,6 @@ export const sendCardOfficeReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
 
-    // Handle attachments
     let attachments = [];
     if (req.files && req.files.length > 0) {
       attachments = req.files.map(file => ({
@@ -867,8 +878,6 @@ export const replyToCardOfficeReport = async (req, res) => {
         recipientRoom = `hospital_${recipientHospitalId}_staff_${recipientId}`;
       }
       
-      console.log(`📡 Emitting 'report_reply_from_cardoffice' to room: ${recipientRoom}`);
-      
       io.to(recipientRoom).emit('report_reply_from_cardoffice', {
         report_id: reply.id,
         parent_report_id: parentReport.id,
@@ -927,32 +936,13 @@ export const markCardOfficeReportRead = async (req, res) => {
   }
 };
 
-// backend/controllers/cardofficeController.js
-// Replace ONLY this function at the bottom of your file:
-
+// ==================== GET HOSPITAL ADMINS FOR CARD OFFICE ====================
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
-    console.log('🏥 Fetching hospital admins for hospital:', req.user.hospital_id);
-    
-    // Try different possible column names
-    let hospitalAdmins;
-    
-    // First try with 'hospital_id'
-    try {
-      hospitalAdmins = await HospitalAdmin.findAll({
-        where: { hospital_id: req.user.hospital_id },
-        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
-      });
-    } catch (error) {
-      // If 'hospital_id' fails, try 'id' (some models use id as hospital reference)
-      console.log('Trying alternative query...');
-      hospitalAdmins = await HospitalAdmin.findAll({
-        where: { id: req.user.hospital_id },
-        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
-      });
-    }
-    
-    console.log('📋 Found hospital admins:', hospitalAdmins?.length || 0);
+    // Get ALL hospital admins (since admin has hospital_id field)
+    const hospitalAdmins = await HospitalAdmin.findAll({
+      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+    });
     
     const formattedAdmins = (hospitalAdmins || []).map(admin => ({
       id: admin.id,
@@ -968,7 +958,6 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    // Return empty array instead of error to prevent frontend crash
     res.json({ 
       success: true, 
       admins: [],
@@ -976,14 +965,8 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     });
   }
 };
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-
-// Helper function for shift display
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-
 const getShiftDisplayNameCardOffice = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
@@ -993,24 +976,19 @@ const getShiftDisplayNameCardOffice = (shiftType) => {
   return shifts[shiftType] || { name: shiftType, start: '--:--', end: '--:--', hours: 0 };
 };
 
-// @desc    Get schedule for logged-in card office staff
-// @route   GET /api/cardoffice/my-schedule
 export const getMyScheduleCardOffice = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     const staffId = req.user.id;
     const hospitalId = req.user.hospital_id;
 
-    // Dynamic import to avoid circular dependency
     const Schedule = (await import('../models/Schedule.js')).default;
-    const { Op } = await import('sequelize');
 
     const whereClause = {
       staff_id: staffId,
       hospital_id: hospitalId
     };
 
-    // Set date range
     if (start_date && end_date) {
       whereClause.date = {
         [Op.between]: [new Date(start_date), new Date(end_date)]
@@ -1025,13 +1003,11 @@ export const getMyScheduleCardOffice = async (req, res) => {
       };
     }
 
-    // Fetch schedules from database
     const schedules = await Schedule.findAll({
       where: whereClause,
       order: [['date', 'ASC']]
     });
 
-    // Process schedules - NO MOCK DATA, only real database records
     const processedSchedules = schedules.map(schedule => {
       const shift = getShiftDisplayNameCardOffice(schedule.shift_type);
       return {
@@ -1047,10 +1023,8 @@ export const getMyScheduleCardOffice = async (req, res) => {
       };
     });
 
-    // Calculate total hours from actual schedules
     const totalHours = processedSchedules.reduce((sum, s) => sum + s.shift_hours, 0);
 
-    // Get upcoming shifts (next 7 days)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const nextWeekDate = new Date(today);
@@ -1061,12 +1035,10 @@ export const getMyScheduleCardOffice = async (req, res) => {
       return scheduleDate >= today && scheduleDate <= nextWeekDate;
     });
 
-    // Get today's schedules
     const todayStr = today.toISOString().split('T')[0];
     const todaySchedules = processedSchedules.filter(s => s.date === todayStr);
     const todayHours = todaySchedules.reduce((sum, s) => sum + s.shift_hours, 0);
 
-    // Get this week's schedules (Monday to Sunday)
     const startOfWeek = new Date(today);
     const dayOfWeek = today.getDay();
     const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
@@ -1098,10 +1070,8 @@ export const getMyScheduleCardOffice = async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: error.message,
-      schedules: [],  // Empty array on error
+      schedules: [],
       total_hours: 0
     });
   }
 };
-
-// END OF SCHEDULE FUNCTIONS
