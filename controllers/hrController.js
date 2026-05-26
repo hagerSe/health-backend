@@ -1870,3 +1870,151 @@ export const getStaffSchedule = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+// ==================== STAFF SCHEDULE (FOR ANY STAFF TYPE) ====================
+
+// @desc    Get schedule for logged-in staff member (works for any department)
+// @route   GET /api/hr/my-schedule
+// @access  Private (any authenticated staff)
+export const getMySchedule = async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query;
+    const staffId = req.user.id;
+    const hospitalId = req.user.hospital_id;
+
+    const whereClause = {
+      staff_id: staffId,
+      hospital_id: hospitalId
+    };
+
+    // Default to next 30 days if no dates provided
+    if (start_date && end_date) {
+      whereClause.date = {
+        [Op.between]: [new Date(start_date), new Date(end_date)]
+      };
+    } else {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const thirtyDaysLater = new Date();
+      thirtyDaysLater.setDate(today.getDate() + 30);
+      whereClause.date = {
+        [Op.between]: [today, thirtyDaysLater]
+      };
+    }
+
+    const schedules = await Schedule.findAll({
+      where: whereClause,
+      order: [['date', 'ASC']]
+    });
+
+    // Calculate total hours and group by week
+    let totalHours = 0;
+    const schedulesByWeek = {};
+    
+    const processedSchedules = schedules.map(schedule => {
+      const shift = getShiftDisplayName(schedule.shift_type);
+      totalHours += shift.hours;
+      
+      // Get week number
+      const date = new Date(schedule.date);
+      const weekNum = getWeekNumber(date);
+      if (!schedulesByWeek[weekNum]) {
+        schedulesByWeek[weekNum] = {
+          week: weekNum,
+          startDate: getStartOfWeek(date),
+          endDate: getEndOfWeek(date),
+          schedules: [],
+          totalHours: 0
+        };
+      }
+      schedulesByWeek[weekNum].schedules.push({
+        id: schedule.id,
+        date: schedule.date,
+        shift_type: schedule.shift_type,
+        shift_name: shift.name,
+        shift_start: shift.start,
+        shift_end: shift.end,
+        shift_hours: shift.hours,
+        ward: schedule.ward,
+        status: schedule.status
+      });
+      schedulesByWeek[weekNum].totalHours += shift.hours;
+      
+      return {
+        id: schedule.id,
+        date: schedule.date,
+        shift_type: schedule.shift_type,
+        shift_name: shift.name,
+        shift_start: shift.start,
+        shift_end: shift.end,
+        shift_hours: shift.hours,
+        ward: schedule.ward,
+        status: schedule.status
+      };
+    });
+
+    // Get upcoming shift (next 7 days)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+    
+    const upcomingShifts = schedules.filter(s => {
+      const scheduleDate = new Date(s.date);
+      return scheduleDate >= today && scheduleDate <= nextWeek;
+    }).map(s => {
+      const shift = getShiftDisplayName(s.shift_type);
+      return {
+        id: s.id,
+        date: s.date,
+        shift_name: shift.name,
+        shift_start: shift.start,
+        shift_end: shift.end,
+        ward: s.ward
+      };
+    });
+
+    res.json({
+      success: true,
+      schedules: processedSchedules,
+      schedulesByWeek: Object.values(schedulesByWeek),
+      total_hours: totalHours,
+      upcoming_shifts: upcomingShifts,
+      total_shifts: schedules.length
+    });
+  } catch (error) {
+    console.error('Error fetching my schedule:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Helper functions
+const getShiftDisplayName = (shiftType) => {
+  const shifts = {
+    morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
+    afternoon: { name: 'Afternoon', start: '14:00', end: '20:00', hours: 6 },
+    night: { name: 'Night', start: '20:00', end: '08:00', hours: 12 }
+  };
+  return shifts[shiftType] || { name: shiftType, start: '--:--', end: '--:--', hours: 0 };
+};
+
+const getWeekNumber = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d - week1) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+};
+
+const getStartOfWeek = (date) => {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.setDate(diff));
+};
+
+const getEndOfWeek = (date) => {
+  const start = getStartOfWeek(date);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return end;
+};
