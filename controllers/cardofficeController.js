@@ -984,7 +984,9 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 
-const getShiftDisplayNameCardOffice = (shiftType) => {
+// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
+
+const getShiftDisplayName = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6 },
     afternoon: { name: 'Afternoon', start: '14:00', end: '20:00', hours: 6 },
@@ -1031,9 +1033,9 @@ export const getMyScheduleCardOffice = async (req, res) => {
       order: [['date', 'ASC']]
     });
 
-    // Process schedules - NO MOCK DATA, only real database records
+    // Process schedules
     const processedSchedules = schedules.map(schedule => {
-      const shift = getShiftDisplayNameCardOffice(schedule.shift_type);
+      const shift = getShiftDisplayName(schedule.shift_type);
       return {
         id: schedule.id,
         date: schedule.date,
@@ -1047,7 +1049,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
       };
     });
 
-    // Calculate total hours from actual schedules
+    // Calculate total hours
     const totalHours = processedSchedules.reduce((sum, s) => sum + s.shift_hours, 0);
 
     // Get upcoming shifts (next 7 days)
@@ -1066,7 +1068,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
     const todaySchedules = processedSchedules.filter(s => s.date === todayStr);
     const todayHours = todaySchedules.reduce((sum, s) => sum + s.shift_hours, 0);
 
-    // Get this week's schedules (Monday to Sunday)
+    // Get this week's schedules
     const startOfWeek = new Date(today);
     const dayOfWeek = today.getDay();
     const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
@@ -1098,10 +1100,9 @@ export const getMyScheduleCardOffice = async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: error.message,
-      schedules: [],  // Empty array on error
+      schedules: [],
       total_hours: 0
     });
   }
 };
-
 // END OF SCHEDULE FUNCTIONS
