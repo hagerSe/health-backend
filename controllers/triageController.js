@@ -395,7 +395,8 @@ export const changeTriagePassword = async (req, res) => {
 };
 
 // ==================== REPORT MANAGEMENT ====================
-export const getHospitalAdminsForTriage = async (req, res) => {
+// ✅ CORRECT - No 'export' here
+const getHospitalAdminsForTriage = async (req, res) => {
   try {
     const hospitalId = req.query.hospital_id || req.user.hospital_id;
     if (!hospitalId) {
