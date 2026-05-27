@@ -39,6 +39,11 @@ const generateVisitNumber = async () => {
   }
 };
 
+// Helper to get hospital ID from various sources
+const getHospitalId = (req) => {
+  return req.query?.hospital_id || req.body?.hospital_id || req.user?.hospital_id || req.user?.hospitalId || null;
+};
+
 // ==================== REGISTER NEW PATIENT ====================
 export const registerPatient = async (req, res) => {
   try {
@@ -59,7 +64,14 @@ export const registerPatient = async (req, res) => {
       });
     }
 
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    if (!currentHospitalId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Hospital ID is required'
+      });
+    }
 
     const year = new Date().getFullYear();
     
@@ -93,8 +105,8 @@ export const registerPatient = async (req, res) => {
       hospital_id: currentHospitalId,
       status: 'in_triage',
       registered_at: new Date(),
-      registered_by: req.user.full_name,
-      registered_by_id: req.user.id
+      registered_by: req.user?.full_name || 'Card Office Staff',
+      registered_by_id: req.user?.id
     });
 
     const visitNumber = await generateVisitNumber();
@@ -174,23 +186,36 @@ export const registerPatient = async (req, res) => {
   }
 };
 
-// ==================== SEARCH PATIENTS ====================
+// ==================== SEARCH PATIENTS (FIXED) ====================
 export const searchPatients = async (req, res) => {
   try {
     const { query } = req.query;
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    let hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      console.error('No hospital_id found in request:', {
+        query: req.query,
+        user: req.user
+      });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required. Please login again.',
+        patients: [],
+        count: 0
+      });
+    }
     
     const whereClause = {
-      hospital_id: hospitalId
+      hospital_id: parseInt(hospitalId)
     };
 
-    if (query) {
+    if (query && query.trim()) {
       whereClause[Op.or] = [
-        { card_number: { [Op.iLike]: `%${query}%` } },
-        { first_name: { [Op.iLike]: `%${query}%` } },
-        { middle_name: { [Op.iLike]: `%${query}%` } },
-        { last_name: { [Op.iLike]: `%${query}%` } },
-        { phone: { [Op.iLike]: `%${query}%` } }
+        { card_number: { [Op.like]: `%${query}%` } },
+        { first_name: { [Op.like]: `%${query}%` } },
+        { middle_name: { [Op.like]: `%${query}%` } },
+        { last_name: { [Op.like]: `%${query}%` } },
+        { phone: { [Op.like]: `%${query}%` } }
       ];
     }
 
@@ -202,20 +227,29 @@ export const searchPatients = async (req, res) => {
 
     res.json({
       success: true,
-      patients,
-      count: patients.length
+      patients: patients || [],
+      count: patients?.length || 0
     });
 
   } catch (error) {
     console.error('Patient search error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Error searching patients',
+      patients: [],
+      count: 0
+    });
   }
 };
 
 // ==================== GET PATIENT BY ID ====================
 export const getPatientById = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
     
     const patient = await Patient.findOne({
       where: {
@@ -249,7 +283,11 @@ export const getPatientById = async (req, res) => {
 export const sendToTriage = async (req, res) => {
   try {
     const { patientId, reason, hospital_id } = req.body;
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+
+    if (!currentHospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
 
     const patient = await Patient.findOne({
       where: {
@@ -322,74 +360,98 @@ export const sendToTriage = async (req, res) => {
   }
 };
 
-// ==================== GET RECENT PATIENTS ====================
+// ==================== GET RECENT PATIENTS (FIXED) ====================
 export const getRecentPatients = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    let hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required',
+        patients: []
+      });
+    }
     
     const patients = await Patient.findAll({
-      where: { hospital_id: hospitalId },
+      where: { hospital_id: parseInt(hospitalId) },
       order: [['registered_at', 'DESC']],
       limit: 20
     });
 
     res.json({
       success: true,
-      patients
+      patients: patients || []
     });
 
   } catch (error) {
     console.error('Error fetching recent patients:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      patients: []
+    });
   }
 };
 
-// ==================== GET DASHBOARD STATS ====================
+// ==================== GET DASHBOARD STATS (FIXED) ====================
 export const getCardOfficeStats = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    let hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required',
+        stats: { today: 0, inTriage: 0, active: 0, total: 0 }
+      });
+    }
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const todayRegistrations = await Patient.count({
       where: {
-        hospital_id: hospitalId,
+        hospital_id: parseInt(hospitalId),
         registered_at: { [Op.gte]: today }
       }
     });
 
     const inTriage = await Patient.count({
       where: {
-        hospital_id: hospitalId,
+        hospital_id: parseInt(hospitalId),
         status: 'in_triage'
       }
     });
 
     const activePatients = await Patient.count({
       where: {
-        hospital_id: hospitalId,
+        hospital_id: parseInt(hospitalId),
         status: { [Op.in]: ['in_triage', 'in_opd', 'in_emergency', 'in_anc', 'with_doctor'] }
       }
     });
 
     const totalPatients = await Patient.count({
-      where: { hospital_id: hospitalId }
+      where: { hospital_id: parseInt(hospitalId) }
     });
 
     res.json({
       success: true,
       stats: {
-        today: todayRegistrations,
-        inTriage: inTriage,
-        active: activePatients,
-        total: totalPatients
+        today: todayRegistrations || 0,
+        inTriage: inTriage || 0,
+        active: activePatients || 0,
+        total: totalPatients || 0
       }
     });
 
   } catch (error) {
     console.error('Error fetching stats:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      stats: { today: 0, inTriage: 0, active: 0, total: 0 }
+    });
   }
 };
 
@@ -397,7 +459,11 @@ export const getCardOfficeStats = async (req, res) => {
 export const updatePatient = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, phone } = req.body;
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+
+    if (!hospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
 
     const patient = await Patient.findOne({
       where: {
@@ -432,7 +498,11 @@ export const updatePatient = async (req, res) => {
 // ==================== STAFF PROFILE MANAGEMENT ====================
 export const getCardOfficeProfile = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
     
     const staff = await HospitalStaff.findOne({
       where: {
@@ -468,7 +538,11 @@ export const getCardOfficeProfile = async (req, res) => {
 export const updateCardOfficeProfile = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, gender, age, phone, hospital_id } = req.body;
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    if (!currentHospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
     
     const staff = await HospitalStaff.findOne({
       where: {
@@ -518,7 +592,11 @@ export const updateCardOfficeProfile = async (req, res) => {
 export const changeCardOfficePassword = async (req, res) => {
   try {
     const { current_password, new_password, hospital_id } = req.body;
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    if (!currentHospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
     
     const staff = await HospitalStaff.findOne({
       where: {
@@ -560,26 +638,38 @@ export const changeCardOfficePassword = async (req, res) => {
   }
 };
 
-// ==================== REPORT MANAGEMENT ====================
+// ==================== REPORT MANAGEMENT (FIXED) ====================
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    let hospitalId = getHospitalId(req);
     
-    // Get reports where this staff member is the recipient AND same hospital
+    console.log('getCardOfficeReportsInbox - userId:', req.user?.id);
+    console.log('getCardOfficeReportsInbox - hospitalId:', hospitalId);
+    
+    if (!req.user?.id) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'User not authenticated',
+        reports: [],
+        unreadCount: 0
+      });
+    }
+    
+    // Get reports where this staff member is the recipient
     const reports = await Report.findAll({
       where: {
         recipient_id: req.user.id,
-        recipient_type: 'staff',
-        recipient_hospital_id: hospitalId
+        recipient_type: 'staff'
       },
       order: [['sent_at', 'DESC']]
     });
+    
+    console.log(`Found ${reports.length} reports for staff ${req.user.id}`);
     
     const unreadCount = await Report.count({
       where: {
         recipient_id: req.user.id,
         recipient_type: 'staff',
-        recipient_hospital_id: hospitalId,
         is_opened: false
       }
     });
@@ -598,12 +688,7 @@ export const getCardOfficeReportsInbox = async (req, res) => {
           senderFullName = `${senderFirstName} ${senderLastName}`.trim();
         }
       } else if (report.sender_type === 'staff') {
-        const staff = await HospitalStaff.findOne({
-          where: {
-            id: report.sender_id,
-            hospital_id: hospitalId
-          }
-        });
+        const staff = await HospitalStaff.findByPk(report.sender_id);
         if (staff) {
           senderFirstName = staff.first_name || '';
           senderLastName = staff.last_name || '';
@@ -621,24 +706,36 @@ export const getCardOfficeReportsInbox = async (req, res) => {
     
     res.json({
       success: true,
-      reports: reportsWithSender,
-      unreadCount
+      reports: reportsWithSender || [],
+      unreadCount: unreadCount || 0
     });
   } catch (error) {
     console.error("Get card office reports inbox error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      reports: [],
+      unreadCount: 0
+    });
   }
 };
 
 export const getCardOfficeReportsOutbox = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+    
+    if (!req.user?.id) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'User not authenticated',
+        reports: []
+      });
+    }
     
     const reports = await Report.findAll({
       where: {
         sender_id: req.user.id,
-        sender_type: 'staff',
-        sender_hospital_id: hospitalId
+        sender_type: 'staff'
       },
       order: [['sent_at', 'DESC']]
     });
@@ -649,23 +746,13 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
       let recipientHospitalName = '';
       
       if (report.recipient_type === 'hospital') {
-        const admin = await HospitalAdmin.findOne({
-          where: {
-            id: report.recipient_id,
-            hospital_id: hospitalId
-          }
-        });
+        const admin = await HospitalAdmin.findByPk(report.recipient_id);
         if (admin) {
           recipientFullName = `${admin.first_name || ''} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name || ''}`.trim();
           recipientHospitalName = admin.hospital_name || '';
         }
       } else if (report.recipient_type === 'staff') {
-        const staff = await HospitalStaff.findOne({
-          where: {
-            id: report.recipient_id,
-            hospital_id: hospitalId
-          }
-        });
+        const staff = await HospitalStaff.findByPk(report.recipient_id);
         if (staff) {
           recipientFullName = `${staff.first_name || ''} ${staff.middle_name ? staff.middle_name + ' ' : ''}${staff.last_name || ''}`.trim();
         }
@@ -683,18 +770,26 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
     
     res.json({
       success: true,
-      reports: reportsWithRecipient
+      reports: reportsWithRecipient || []
     });
   } catch (error) {
     console.error("Get card office reports outbox error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      reports: []
+    });
   }
 };
 
 export const sendCardOfficeReport = async (req, res) => {
   try {
     const { title, subject, body, priority, recipient_type, recipient_id, hospital_id } = req.body;
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+
+    if (!currentHospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
 
     const sender = await HospitalStaff.findOne({
       where: {
@@ -825,7 +920,11 @@ export const sendCardOfficeReport = async (req, res) => {
 export const replyToCardOfficeReport = async (req, res) => {
   try {
     const { body, hospital_id } = req.body;
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    if (!currentHospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
     
     const parentReport = await Report.findOne({
       where: {
@@ -1009,7 +1108,11 @@ export const replyToCardOfficeReport = async (req, res) => {
 export const markCardOfficeReportRead = async (req, res) => {
   try {
     const { hospital_id } = req.body;
-    const currentHospitalId = hospital_id || req.user.hospital_id;
+    const currentHospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    if (!currentHospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    }
     
     const report = await Report.findOne({
       where: {
@@ -1040,7 +1143,15 @@ export const markCardOfficeReportRead = async (req, res) => {
 // ==================== GET HOSPITAL ADMINS FOR CARD OFFICE ====================
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+    
+    if (!hospitalId) {
+      return res.json({ 
+        success: true, 
+        admins: [],
+        message: 'No hospital ID found'
+      });
+    }
     
     // Get hospital admins from the same hospital only
     const hospitalAdmins = await HospitalAdmin.findAll({
@@ -1084,7 +1195,16 @@ export const getMyScheduleCardOffice = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     const staffId = req.user.id;
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = getHospitalId(req);
+
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required',
+        schedules: [],
+        total_hours: 0
+      });
+    }
 
     const Schedule = (await import('../models/Schedule.js')).default;
 
