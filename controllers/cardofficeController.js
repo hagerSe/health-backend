@@ -48,7 +48,8 @@ export const registerPatient = async (req, res) => {
       last_name,
       age,
       gender,
-      phone
+      phone,
+      hospital_id
     } = req.body;
 
     if (!first_name || !last_name || !age || !gender) {
@@ -58,9 +59,12 @@ export const registerPatient = async (req, res) => {
       });
     }
 
+    const currentHospitalId = hospital_id || req.user.hospital_id;
+
     const year = new Date().getFullYear();
     
     const lastPatient = await Patient.findOne({
+      where: { hospital_id: currentHospitalId },
       order: [['createdAt', 'DESC']],
       attributes: ['card_number']
     });
@@ -86,7 +90,7 @@ export const registerPatient = async (req, res) => {
       age,
       gender,
       phone,
-      hospital_id: req.user.hospital_id,
+      hospital_id: currentHospitalId,
       status: 'in_triage',
       registered_at: new Date(),
       registered_by: req.user.full_name,
@@ -97,7 +101,7 @@ export const registerPatient = async (req, res) => {
     
     await Visit.create({
       patient_id: patient.id,
-      hospital_id: req.user.hospital_id,
+      hospital_id: currentHospitalId,
       visit_number: visitNumber,
       visit_type: 'OPD',
       status: 'active',
@@ -107,7 +111,7 @@ export const registerPatient = async (req, res) => {
     await Notification.create({
       recipient_id: patient.id,
       recipient_type: 'triage_nurse',
-      hospital_id: req.user.hospital_id,
+      hospital_id: currentHospitalId,
       title: 'New Patient Registered',
       message: `Patient ${first_name} ${last_name} is waiting for triage.`,
       type: 'new_patient',
@@ -125,7 +129,7 @@ export const registerPatient = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      const triageRoom = `hospital_${req.user.hospital_id}_triage`;
+      const triageRoom = `hospital_${currentHospitalId}_triage`;
       io.to(triageRoom).emit('new_patient_registered', {
         patient_id: patient.id,
         card_number: patient.card_number,
@@ -135,10 +139,10 @@ export const registerPatient = async (req, res) => {
         phone,
         status: 'in_triage',
         registered_at: new Date(),
-        hospital_id: req.user.hospital_id
+        hospital_id: currentHospitalId
       });
 
-      const cardOfficeRoom = `hospital_${req.user.hospital_id}_cardoffice`;
+      const cardOfficeRoom = `hospital_${currentHospitalId}_cardoffice`;
       io.to(cardOfficeRoom).emit('patient_registered', {
         patient_id: patient.id,
         card_number: patient.card_number,
@@ -174,9 +178,10 @@ export const registerPatient = async (req, res) => {
 export const searchPatients = async (req, res) => {
   try {
     const { query } = req.query;
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
     
     const whereClause = {
-      hospital_id: req.user.hospital_id
+      hospital_id: hospitalId
     };
 
     if (query) {
@@ -210,10 +215,12 @@ export const searchPatients = async (req, res) => {
 // ==================== GET PATIENT BY ID ====================
 export const getPatientById = async (req, res) => {
   try {
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
     const patient = await Patient.findOne({
       where: {
         id: req.params.id,
-        hospital_id: req.user.hospital_id
+        hospital_id: hospitalId
       }
     });
 
@@ -241,12 +248,13 @@ export const getPatientById = async (req, res) => {
 // ==================== SEND RETURNING PATIENT TO TRIAGE ====================
 export const sendToTriage = async (req, res) => {
   try {
-    const { patientId, reason } = req.body;
+    const { patientId, reason, hospital_id } = req.body;
+    const currentHospitalId = hospital_id || req.user.hospital_id;
 
     const patient = await Patient.findOne({
       where: {
         id: patientId,
-        hospital_id: req.user.hospital_id
+        hospital_id: currentHospitalId
       }
     });
 
@@ -264,7 +272,7 @@ export const sendToTriage = async (req, res) => {
     
     await Visit.create({
       patient_id: patient.id,
-      hospital_id: req.user.hospital_id,
+      hospital_id: currentHospitalId,
       visit_number: visitNumber,
       visit_type: 'Follow-up',
       status: 'active',
@@ -276,7 +284,7 @@ export const sendToTriage = async (req, res) => {
     await Notification.create({
       recipient_id: patient.id,
       recipient_type: 'triage_nurse',
-      hospital_id: req.user.hospital_id,
+      hospital_id: currentHospitalId,
       title: 'Returning Patient',
       message: `Patient ${patient.first_name} ${patient.last_name} has returned. Reason: ${reason}`,
       type: 'return_patient',
@@ -293,7 +301,7 @@ export const sendToTriage = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      io.to(`hospital_${req.user.hospital_id}_triage`).emit('returning_patient', {
+      io.to(`hospital_${currentHospitalId}_triage`).emit('returning_patient', {
         patient_id: patient.id,
         card_number: patient.card_number,
         patient_name: `${patient.first_name} ${patient.middle_name || ''} ${patient.last_name}`,
@@ -317,8 +325,10 @@ export const sendToTriage = async (req, res) => {
 // ==================== GET RECENT PATIENTS ====================
 export const getRecentPatients = async (req, res) => {
   try {
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
     const patients = await Patient.findAll({
-      where: { hospital_id: req.user.hospital_id },
+      where: { hospital_id: hospitalId },
       order: [['registered_at', 'DESC']],
       limit: 20
     });
@@ -337,7 +347,7 @@ export const getRecentPatients = async (req, res) => {
 // ==================== GET DASHBOARD STATS ====================
 export const getCardOfficeStats = async (req, res) => {
   try {
-    const hospitalId = req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -387,11 +397,12 @@ export const getCardOfficeStats = async (req, res) => {
 export const updatePatient = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, phone } = req.body;
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
 
     const patient = await Patient.findOne({
       where: {
         id: req.params.id,
-        hospital_id: req.user.hospital_id
+        hospital_id: hospitalId
       }
     });
 
@@ -421,7 +432,13 @@ export const updatePatient = async (req, res) => {
 // ==================== STAFF PROFILE MANAGEMENT ====================
 export const getCardOfficeProfile = async (req, res) => {
   try {
-    const staff = await HospitalStaff.findByPk(req.user.id, {
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
+    const staff = await HospitalStaff.findOne({
+      where: {
+        id: req.user.id,
+        hospital_id: hospitalId
+      },
       attributes: { exclude: ['password'] }
     });
     
@@ -450,9 +467,15 @@ export const getCardOfficeProfile = async (req, res) => {
 
 export const updateCardOfficeProfile = async (req, res) => {
   try {
-    const { first_name, middle_name, last_name, gender, age, phone } = req.body;
+    const { first_name, middle_name, last_name, gender, age, phone, hospital_id } = req.body;
+    const currentHospitalId = hospital_id || req.user.hospital_id;
     
-    const staff = await HospitalStaff.findByPk(req.user.id);
+    const staff = await HospitalStaff.findOne({
+      where: {
+        id: req.user.id,
+        hospital_id: currentHospitalId
+      }
+    });
     
     if (!staff) {
       return res.status(404).json({ 
@@ -470,7 +493,11 @@ export const updateCardOfficeProfile = async (req, res) => {
       phone: phone !== undefined ? phone : staff.phone
     });
     
-    const updatedStaff = await HospitalStaff.findByPk(req.user.id, {
+    const updatedStaff = await HospitalStaff.findOne({
+      where: {
+        id: req.user.id,
+        hospital_id: currentHospitalId
+      },
       attributes: { exclude: ['password'] }
     });
     
@@ -490,9 +517,15 @@ export const updateCardOfficeProfile = async (req, res) => {
 
 export const changeCardOfficePassword = async (req, res) => {
   try {
-    const { current_password, new_password } = req.body;
+    const { current_password, new_password, hospital_id } = req.body;
+    const currentHospitalId = hospital_id || req.user.hospital_id;
     
-    const staff = await HospitalStaff.findByPk(req.user.id);
+    const staff = await HospitalStaff.findOne({
+      where: {
+        id: req.user.id,
+        hospital_id: currentHospitalId
+      }
+    });
     
     if (!staff) {
       return res.status(404).json({ 
@@ -530,11 +563,14 @@ export const changeCardOfficePassword = async (req, res) => {
 // ==================== REPORT MANAGEMENT ====================
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
-    // Get reports where this staff member is the recipient
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
+    // Get reports where this staff member is the recipient AND same hospital
     const reports = await Report.findAll({
       where: {
         recipient_id: req.user.id,
-        recipient_type: 'staff'
+        recipient_type: 'staff',
+        recipient_hospital_id: hospitalId
       },
       order: [['sent_at', 'DESC']]
     });
@@ -543,6 +579,7 @@ export const getCardOfficeReportsInbox = async (req, res) => {
       where: {
         recipient_id: req.user.id,
         recipient_type: 'staff',
+        recipient_hospital_id: hospitalId,
         is_opened: false
       }
     });
@@ -561,7 +598,12 @@ export const getCardOfficeReportsInbox = async (req, res) => {
           senderFullName = `${senderFirstName} ${senderLastName}`.trim();
         }
       } else if (report.sender_type === 'staff') {
-        const staff = await HospitalStaff.findByPk(report.sender_id);
+        const staff = await HospitalStaff.findOne({
+          where: {
+            id: report.sender_id,
+            hospital_id: hospitalId
+          }
+        });
         if (staff) {
           senderFirstName = staff.first_name || '';
           senderLastName = staff.last_name || '';
@@ -590,10 +632,13 @@ export const getCardOfficeReportsInbox = async (req, res) => {
 
 export const getCardOfficeReportsOutbox = async (req, res) => {
   try {
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
     const reports = await Report.findAll({
       where: {
         sender_id: req.user.id,
-        sender_type: 'staff'
+        sender_type: 'staff',
+        sender_hospital_id: hospitalId
       },
       order: [['sent_at', 'DESC']]
     });
@@ -604,13 +649,23 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
       let recipientHospitalName = '';
       
       if (report.recipient_type === 'hospital') {
-        const admin = await HospitalAdmin.findByPk(report.recipient_id);
+        const admin = await HospitalAdmin.findOne({
+          where: {
+            id: report.recipient_id,
+            hospital_id: hospitalId
+          }
+        });
         if (admin) {
           recipientFullName = `${admin.first_name || ''} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name || ''}`.trim();
           recipientHospitalName = admin.hospital_name || '';
         }
       } else if (report.recipient_type === 'staff') {
-        const staff = await HospitalStaff.findByPk(report.recipient_id);
+        const staff = await HospitalStaff.findOne({
+          where: {
+            id: report.recipient_id,
+            hospital_id: hospitalId
+          }
+        });
         if (staff) {
           recipientFullName = `${staff.first_name || ''} ${staff.middle_name ? staff.middle_name + ' ' : ''}${staff.last_name || ''}`.trim();
         }
@@ -638,9 +693,15 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
 
 export const sendCardOfficeReport = async (req, res) => {
   try {
-    const { title, subject, body, priority, recipient_type, recipient_id } = req.body;
+    const { title, subject, body, priority, recipient_type, recipient_id, hospital_id } = req.body;
+    const currentHospitalId = hospital_id || req.user.hospital_id;
 
-    const sender = await HospitalStaff.findByPk(req.user.id);
+    const sender = await HospitalStaff.findOne({
+      where: {
+        id: req.user.id,
+        hospital_id: currentHospitalId
+      }
+    });
     
     if (!sender) {
       return res.status(404).json({ success: false, message: "Sender not found" });
@@ -652,14 +713,24 @@ export const sendCardOfficeReport = async (req, res) => {
     let recipientHospitalName = '';
     
     if (recipient_type === 'hospital') {
-      recipient = await HospitalAdmin.findByPk(recipient_id);
+      recipient = await HospitalAdmin.findOne({
+        where: {
+          id: recipient_id,
+          hospital_id: currentHospitalId
+        }
+      });
       if (recipient) {
         recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientHospitalId = recipient.id;
         recipientHospitalName = recipient.hospital_name || '';
       }
     } else if (recipient_type === 'staff') {
-      recipient = await HospitalStaff.findByPk(recipient_id);
+      recipient = await HospitalStaff.findOne({
+        where: {
+          id: recipient_id,
+          hospital_id: currentHospitalId
+        }
+      });
       if (recipient) {
         recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientHospitalId = recipient.hospital_id;
@@ -711,7 +782,7 @@ export const sendCardOfficeReport = async (req, res) => {
       sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
       sender_title: `Card Office Staff - ${sender.department || 'Card Office'} Department`,
       sender_hospital: sender.hospital_name,
-      sender_hospital_id: sender.hospital_id,
+      sender_hospital_id: currentHospitalId,
       recipient_id: recipient.id,
       recipient_type: recipient_type,
       recipient_first_name: recipient.first_name || '',
@@ -728,9 +799,9 @@ export const sendCardOfficeReport = async (req, res) => {
     if (io) {
       let recipientRoom = '';
       if (recipient_type === 'hospital') {
-        recipientRoom = `hospital_${recipientHospitalId}_admin`;
+        recipientRoom = `hospital_${currentHospitalId}_admin`;
       } else if (recipient_type === 'staff') {
-        recipientRoom = `hospital_${recipientHospitalId}_staff_${recipient.id}`;
+        recipientRoom = `hospital_${currentHospitalId}_staff_${recipient.id}`;
       }
       
       io.to(recipientRoom).emit('new_report_from_cardoffice', {
@@ -753,8 +824,18 @@ export const sendCardOfficeReport = async (req, res) => {
 
 export const replyToCardOfficeReport = async (req, res) => {
   try {
-    const { body } = req.body;
-    const parentReport = await Report.findByPk(req.params.id);
+    const { body, hospital_id } = req.body;
+    const currentHospitalId = hospital_id || req.user.hospital_id;
+    
+    const parentReport = await Report.findOne({
+      where: {
+        id: req.params.id,
+        [Op.or]: [
+          { sender_hospital_id: currentHospitalId },
+          { recipient_hospital_id: currentHospitalId }
+        ]
+      }
+    });
 
     if (!parentReport) {
       return res.status(404).json({ success: false, message: "Report not found" });
@@ -769,7 +850,13 @@ export const replyToCardOfficeReport = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to reply" });
     }
 
-    const sender = await HospitalStaff.findByPk(req.user.id);
+    const sender = await HospitalStaff.findOne({
+      where: {
+        id: req.user.id,
+        hospital_id: currentHospitalId
+      }
+    });
+    
     if (!sender) {
       return res.status(404).json({ success: false, message: "Sender not found" });
     }
@@ -785,7 +872,12 @@ export const replyToCardOfficeReport = async (req, res) => {
     let recipientHospitalName = '';
 
     if (recipientType === 'hospital') {
-      const hospitalAdmin = await HospitalAdmin.findByPk(recipientId);
+      const hospitalAdmin = await HospitalAdmin.findOne({
+        where: {
+          id: recipientId,
+          hospital_id: currentHospitalId
+        }
+      });
       if (hospitalAdmin) {
         recipientFirstName = hospitalAdmin.first_name || '';
         recipientMiddleName = hospitalAdmin.middle_name || '';
@@ -795,7 +887,12 @@ export const replyToCardOfficeReport = async (req, res) => {
         recipientHospitalName = hospitalAdmin.hospital_name || '';
       }
     } else if (recipientType === 'staff') {
-      const staffMember = await HospitalStaff.findByPk(recipientId);
+      const staffMember = await HospitalStaff.findOne({
+        where: {
+          id: recipientId,
+          hospital_id: currentHospitalId
+        }
+      });
       if (staffMember) {
         recipientFirstName = staffMember.first_name || '';
         recipientMiddleName = staffMember.middle_name || '';
@@ -846,7 +943,7 @@ export const replyToCardOfficeReport = async (req, res) => {
       sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
       sender_title: `Card Office Staff - ${sender.department || 'Card Office'} Department`,
       sender_hospital: sender.hospital_name,
-      sender_hospital_id: sender.hospital_id,
+      sender_hospital_id: currentHospitalId,
       sender_department: sender.department,
       recipient_id: recipientId,
       recipient_type: recipientType,
@@ -873,9 +970,9 @@ export const replyToCardOfficeReport = async (req, res) => {
       let recipientRoom = '';
       
       if (recipientType === 'hospital') {
-        recipientRoom = `hospital_${recipientHospitalId}_admin`;
+        recipientRoom = `hospital_${currentHospitalId}_admin`;
       } else if (recipientType === 'staff') {
-        recipientRoom = `hospital_${recipientHospitalId}_staff_${recipientId}`;
+        recipientRoom = `hospital_${currentHospitalId}_staff_${recipientId}`;
       }
       
       io.to(recipientRoom).emit('report_reply_from_cardoffice', {
@@ -911,11 +1008,15 @@ export const replyToCardOfficeReport = async (req, res) => {
 
 export const markCardOfficeReportRead = async (req, res) => {
   try {
+    const { hospital_id } = req.body;
+    const currentHospitalId = hospital_id || req.user.hospital_id;
+    
     const report = await Report.findOne({
       where: {
         id: req.params.id,
         recipient_id: req.user.id,
-        recipient_type: 'staff'
+        recipient_type: 'staff',
+        recipient_hospital_id: currentHospitalId
       }
     });
 
@@ -939,8 +1040,11 @@ export const markCardOfficeReportRead = async (req, res) => {
 // ==================== GET HOSPITAL ADMINS FOR CARD OFFICE ====================
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
-    // Get ALL hospital admins (since admin has hospital_id field)
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
+    // Get hospital admins from the same hospital only
     const hospitalAdmins = await HospitalAdmin.findAll({
+      where: { hospital_id: hospitalId },
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
     
@@ -980,7 +1084,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     const staffId = req.user.id;
-    const hospitalId = req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
 
     const Schedule = (await import('../models/Schedule.js')).default;
 
