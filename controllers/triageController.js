@@ -588,24 +588,6 @@ export const replyToTriageReport = async (req, res) => {
   }
 };
 
-export const markTriageReportRead = async (req, res) => {
-  try {
-    const report = await Report.findOne({
-      where: { id: req.params.id, recipient_id: req.user.id, recipient_type: 'staff' }
-    });
-    if (!report) return res.status(404).json({ success: false, message: "Report not found" });
-    
-    await report.update({ 
-      is_opened: true, 
-      opened_at: new Date(), 
-      opened_count: (report.opened_count || 0) + 1 
-    });
-    res.json({ success: true, message: "Report marked as read" });
-  } catch (error) {
-    console.error("Mark report read error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
 
 // ==================== SCHEDULE FUNCTIONS ====================
 const getMyScheduleTriage = async (req, res) => {
@@ -697,7 +679,7 @@ export {
   getTriageReportsOutbox,
   sendTriageReport,
   replyToTriageReport,
-  markTriageReportRead,
+ 
   getHospitalAdminsForTriage,
   getMyScheduleTriage
 };
