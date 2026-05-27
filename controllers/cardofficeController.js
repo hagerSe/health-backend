@@ -1560,6 +1560,7 @@ export const getMyCardOfficeScheduleStats = async (req, res) => {
 // @desc    Get my notifications
 // @route   GET /api/card-office/notifications
 // @access  Private
+// Add this to cardofficeController.js if missing
 export const getMyCardOfficeNotifications = async (req, res) => {
   try {
     const whereClause = {
@@ -1593,4 +1594,29 @@ export const getMyCardOfficeNotifications = async (req, res) => {
       message: error.message 
     });
   }
+};
+// At the end of cardofficeController.js, make sure all exports are present
+export {
+  registerPatient,
+  getPatientsInTriage,
+  searchPatients,
+  getPatientById,
+  sendToTriage,
+  getRecentPatients,
+  updatePatient,
+  getCardOfficeStats,
+  getCardOfficeProfile,
+  updateCardOfficeProfile,
+  changeCardOfficePassword,
+  getCardOfficeReportsInbox,
+  getCardOfficeReportsOutbox,
+  sendCardOfficeReport,
+  replyToCardOfficeReport,
+  markCardOfficeReportRead,
+  getHospitalAdminsForCardOffice,
+  getMyCardOfficeSchedule,
+  getMyCardOfficeWeeklySchedule,
+  getMyCardOfficeTodaySchedule,
+  getMyCardOfficeScheduleStats,
+  getMyCardOfficeNotifications
 };

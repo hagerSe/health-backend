@@ -1,13 +1,14 @@
+// backend/routes/cardofficeRoutes.js
 import express from 'express';
-import { protect, restrictTo } from '../middleware/auth.js';
 import {
   registerPatient,
+  getPatientsInTriage,
   searchPatients,
   getPatientById,
   sendToTriage,
   getRecentPatients,
-  getCardOfficeStats,
   updatePatient,
+  getCardOfficeStats,
   getCardOfficeProfile,
   updateCardOfficeProfile,
   changeCardOfficePassword,
@@ -17,15 +18,18 @@ import {
   replyToCardOfficeReport,
   markCardOfficeReportRead,
   getHospitalAdminsForCardOffice,
-  getMyScheduleCardOffice
+  getMyCardOfficeSchedule,
+  getMyCardOfficeWeeklySchedule,
+  getMyCardOfficeTodaySchedule,
+  getMyCardOfficeScheduleStats,
+  getMyCardOfficeNotifications
 } from '../controllers/cardofficeController.js';
+import { protect } from '../middleware/authMiddleware.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-const router = express.Router();
-
-// Configure multer for file uploads
+// ==================== MULTER CONFIGURATION ====================
 const reportsDir = 'uploads/reports';
 if (!fs.existsSync(reportsDir)) {
   fs.mkdirSync(reportsDir, { recursive: true });
@@ -37,7 +41,7 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `report-${uniqueSuffix}${path.extname(file.originalname)}`);
+    cb(null, `cardoffice-report-${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
@@ -54,32 +58,65 @@ const upload = multer({
   }
 });
 
+const router = express.Router();
+
+// All routes require authentication
+router.use(protect);
+
 // ==================== PATIENT MANAGEMENT ====================
-router.post('/patients/register', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), registerPatient);
-router.get('/patients/search', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), searchPatients);
-router.get('/patients/recent', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), getRecentPatients);
-router.get('/patients/:id', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), getPatientById);
-router.put('/patients/:id', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), updatePatient);
-router.post('/patients/send-to-triage', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), sendToTriage);
+router.post('/register', registerPatient);
+router.post('/send-to-triage', sendToTriage);
+router.get('/patients/triage', getPatientsInTriage);
+router.get('/patients/search', searchPatients);
+router.get('/patients/:id', getPatientById);
+router.put('/patients/:id', updatePatient);
+router.get('/recent', getRecentPatients);
 
-// ==================== STATISTICS ====================
-router.get('/stats', protect, restrictTo('card_office', 'card_office_staff', 'cardoffice'), getCardOfficeStats);
+// ==================== DASHBOARD STATS ====================
+router.get('/stats', getCardOfficeStats);
 
-// ==================== STAFF PROFILE ====================
-router.get('/profile', protect, getCardOfficeProfile);
-router.put('/profile', protect, updateCardOfficeProfile);
-router.put('/change-password', protect, changeCardOfficePassword);
-
-// ==================== SCHEDULE ROUTES ====================
-router.get('/my-schedule', protect, getMyScheduleCardOffice);
+// ==================== PROFILE MANAGEMENT ====================
+router.get('/profile', getCardOfficeProfile);
+router.put('/profile', updateCardOfficeProfile);
+router.put('/change-password', changeCardOfficePassword);
 
 // ==================== REPORT MANAGEMENT ====================
-router.get('/reports/inbox', protect, getCardOfficeReportsInbox);
-router.get('/reports/outbox', protect, getCardOfficeReportsOutbox);
-router.post('/reports/send', protect, upload.array('attachments', 5), sendCardOfficeReport);
-router.post('/reports/:id/reply', protect, upload.single('attachment'), replyToCardOfficeReport);
-router.put('/reports/:id/read', protect, markCardOfficeReportRead);
-router.get('/hospital-admins', protect, getHospitalAdminsForCardOffice);
+router.get('/reports/inbox', getCardOfficeReportsInbox);
+router.get('/reports/outbox', getCardOfficeReportsOutbox);
+router.post('/reports/send', upload.array('attachments', 5), sendCardOfficeReport);
+router.post('/reports/:id/reply', upload.array('attachments', 5), replyToCardOfficeReport);
+router.put('/reports/:id/read', markCardOfficeReportRead);
+router.get('/hospital-admins', getHospitalAdminsForCardOffice);
+
+// ==================== SCHEDULE MANAGEMENT ====================
+router.get('/my-schedule', getMyCardOfficeSchedule);
+router.get('/weekly-schedule', getMyCardOfficeWeeklySchedule);
+router.get('/today-schedule', getMyCardOfficeTodaySchedule);
+router.get('/schedule-stats', getMyCardOfficeScheduleStats);
+
+// ==================== NOTIFICATIONS ====================
+router.get('/notifications', getMyCardOfficeNotifications);
+router.put('/notifications/:id/read', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const notification = await Notification.findOne({
+      where: {
+        id: id,
+        recipient_id: req.user.id,
+        recipient_type: 'staff'
+      }
+    });
+    
+    if (!notification) {
+      return res.status(404).json({ success: false, message: 'Notification not found' });
+    }
+    
+    await notification.update({ is_read: true });
+    res.json({ success: true, message: 'Notification marked as read' });
+  } catch (error) {
+    console.error('Error marking notification read:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 export default router;
-// END OF FILE - NOTHING AFTER THIS LINE
