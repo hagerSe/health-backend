@@ -84,25 +84,25 @@ const determinePriority = (ward, vitals) => {
   let priority = 'routine';
   if (ward === 'EME') priority = 'urgent';
   
-  if (vitals.blood_pressure) {
+  if (vitals?.blood_pressure) {
     const systolic = parseInt(vitals.blood_pressure.split('/')[0]);
     if (systolic > 180) priority = 'critical';
     else if (systolic > 140) priority = 'high';
   }
   
-  if (vitals.oxygen_saturation) {
+  if (vitals?.oxygen_saturation) {
     const o2 = parseInt(vitals.oxygen_saturation);
     if (o2 < 90) priority = 'critical';
     else if (o2 < 94) priority = 'high';
   }
   
-  if (vitals.temperature) {
+  if (vitals?.temperature) {
     const temp = parseFloat(vitals.temperature);
     if (temp > 39 || temp < 35) priority = 'critical';
     else if (temp > 38 || temp < 36) priority = 'high';
   }
   
-  if (vitals.heart_rate) {
+  if (vitals?.heart_rate) {
     const hr = parseInt(vitals.heart_rate);
     if (hr > 120 || hr < 50) priority = 'critical';
     else if (hr > 100 || hr < 60) priority = 'high';
@@ -157,6 +157,7 @@ export const getTriagedPatients = async (req, res) => {
   }
 };
 
+// ==================== GET PATIENT BY ID FOR TRIAGE (ADDED - FIXES THE ERROR) ====================
 export const getPatientForTriage = async (req, res) => {
   try {
     const hospitalId = req.query.hospital_id || req.user.hospital_id;
@@ -188,17 +189,10 @@ export const getPatientForTriage = async (req, res) => {
       limit: 5
     });
 
-    res.json({
-      success: true,
-      patient,
-      visits
-    });
+    res.json({ success: true, patient, visits });
   } catch (error) {
     console.error('Error getting patient for triage:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -613,7 +607,7 @@ export const markTriageReportRead = async (req, res) => {
 };
 
 // ==================== SCHEDULE FUNCTIONS ====================
-export const getMyScheduleTriage = async (req, res) => {
+const getMyScheduleTriage = async (req, res) => {
   try {
     const { days = 30 } = req.query;
     const schedules = await Schedule.findAll({
@@ -685,4 +679,24 @@ export const getMyScheduleTriage = async (req, res) => {
       total_hours: 0 
     });
   }
+};
+
+// ==================== EXPORTS ====================
+export { 
+  upload,
+  getTriageQueue,
+  getTriagedPatients,
+  getPatientForTriage,
+  recordVitalsAndSendToWard,
+  getTriageStats,
+  getTriageProfile,
+  updateTriageProfile,
+  changeTriagePassword,
+  getTriageReportsInbox,
+  getTriageReportsOutbox,
+  sendTriageReport,
+  replyToTriageReport,
+  markTriageReportRead,
+  getHospitalAdminsForTriage,
+  getMyScheduleTriage
 };
