@@ -32,6 +32,7 @@ import pharmacyRoutes from './routes/pharmacyRoutes.js';
 import bedRoutes from './routes/bedRoutes.js';
 import midwifeRoutes from './routes/midwifeRoutes.js';
 import hrRoutes from './routes/hrRoutes.js';
+import staffRoutes from './routes/staffRoutes.js';
 import uploadRoutes from "./routes/uploadRoutes.js";
 
 // ===== NEW HOSPITAL MANAGEMENT ROUTES =====
@@ -366,6 +367,7 @@ app.use('/api/pharmacy', pharmacyRoutes);
 app.use('/api/beds', bedRoutes);
 app.use('/api/midwife', midwifeRoutes);
 app.use('/api/hr', hrRoutes);
+app.use('/api/staff', staffRoutes);
 app.use("/api", uploadRoutes);
 
 // Debug route for doctor routes

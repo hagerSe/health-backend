@@ -852,9 +852,10 @@ export const sendCardOfficeReport = async (req, res) => {
 
     let attachments = [];
     if (req.files && req.files.length > 0) {
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
       attachments = req.files.map(file => ({
         name: file.originalname,
-        url: `/uploads/reports/${file.filename}`,
+        url: `${baseUrl}/uploads/reports/${file.filename}`,
         type: file.mimetype,
         size: file.size,
         uploaded_at: new Date()
@@ -1017,9 +1018,10 @@ export const replyToCardOfficeReport = async (req, res) => {
 
     let attachments = [];
     if (req.file) {
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
       attachments = [{
         name: req.file.originalname,
-        url: `/uploads/reports/${req.file.filename}`,
+        url: `${baseUrl}/uploads/reports/${req.file.filename}`,
         type: req.file.mimetype,
         size: req.file.size,
         uploaded_at: new Date()

@@ -1422,9 +1422,9 @@ export const getHRReportsInbox = async (req, res) => {
     
     if (search) {
       whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { body: { [Op.iLike]: `%${search}%` } },
-        { sender_full_name: { [Op.iLike]: `%${search}%` } }
+        { title: { [Op.like]: `%${search}%` } },
+        { body: { [Op.like]: `%${search}%` } },
+        { sender_full_name: { [Op.like]: `%${search}%` } }
       ];
     }
     
@@ -1473,9 +1473,9 @@ export const getHRReportsOutbox = async (req, res) => {
     
     if (search) {
       whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { body: { [Op.iLike]: `%${search}%` } },
-        { recipient_full_name: { [Op.iLike]: `%${search}%` } }
+        { title: { [Op.like]: `%${search}%` } },
+        { body: { [Op.like]: `%${search}%` } },
+        { recipient_full_name: { [Op.like]: `%${search}%` } }
       ];
     }
     
@@ -1801,8 +1801,15 @@ export const markHRReportRead = async (req, res) => {
 // @route   GET /api/hr/hospital-admins
 export const getHospitalAdminsForHR = async (req, res) => {
   try {
+    const hospitalId = req.user.hospital_id || req.user.hospitalId;
+
+    if (!hospitalId) {
+      return res.json({ success: true, admins: [], message: 'No hospital ID found' });
+    }
+
+    // Query by hospital_id (foreign key), not by id (primary key)
     const hospitalAdmins = await HospitalAdmin.findAll({
-      where: { id: req.user.hospital_id },
+      where: { hospital_id: hospitalId },
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
     
@@ -1810,14 +1817,14 @@ export const getHospitalAdminsForHR = async (req, res) => {
       id: admin.id,
       full_name: formatFullName(admin),
       email: admin.email,
-      hospital_name: admin.hospital_name,
-      hospital_id: admin.id
+      hospital_name: admin.hospital_name || 'Hospital',
+      hospital_id: hospitalId
     }));
     
     res.json({ success: true, admins: formattedAdmins });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.json({ success: true, admins: [], message: error.message });
   }
 };
 
