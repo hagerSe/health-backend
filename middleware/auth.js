@@ -1,3 +1,4 @@
+// backend/middleware/auth.js
 import jwt from 'jsonwebtoken';
 import HospitalStaff from '../models/HospitalStaff.js';
 import FederalAdmin from '../models/FederalAdmin.js';
@@ -88,22 +89,26 @@ export const protect = async (req, res, next) => {
         });
       }
 
-      // ✅ CORRECTED: Added both 'type' and 'userType' properties
+      // ✅ FIXED: Added hospital_id and hospitalId for card office and other departments
       req.user = {
         id: user.id,
         first_name: user.first_name,
         middle_name: user.middle_name || '',
         last_name: user.last_name,
+        full_name: `${user.first_name} ${user.middle_name ? user.middle_name + ' ' : ''}${user.last_name}`.trim(),
         email: user.email,
-        type: decoded.type,           // ← ADDED
-        userType: decoded.type,       // ← Keep for compatibility
+        type: decoded.type,
+        userType: decoded.type,
         role: decoded.role || user.role,
         status: user.status,
         is_verified: user.is_verified,
-        // Add department and other fields if they exist
         department: user.department,
         ward: user.ward,
         hospital_name: user.hospital_name,
+        // ✅ CRITICAL FIX: Add hospital_id for card office, doctors, nurses, etc.
+        hospital_id: user.hospital_id,
+        hospitalId: user.hospital_id,
+        // Other fields
         region_name: user.region_name,
         zone_name: user.zone_name,
         woreda_name: user.woreda_name,
@@ -115,6 +120,7 @@ export const protect = async (req, res, next) => {
       
       console.log('✅ Authentication successful for:', user.email);
       console.log('   User Type:', req.user.userType);
+      console.log('   Hospital ID:', req.user.hospital_id);
       if (user.department) console.log('   Department:', user.department);
       if (user.ward) console.log('   Ward:', user.ward);
       
@@ -162,17 +168,17 @@ export const restrictTo = (...roles) => {
       console.log('🔐 Required roles:', roles);
       
       const departmentMap = {
-        'doctor': ['doctor', 'opd_doctor', 'eme_doctor', 'physician', 'consultant', 'card_office', 'card_office_staff', 'cardofffice'],
-        'opd_doctor': ['doctor', 'opd_doctor', 'card_office', 'card_office_staff', 'cardofffice'],
-        'eme_doctor': ['doctor', 'eme_doctor', 'card_office', 'card_office_staff', 'cardofffice'],
+        'doctor': ['doctor', 'opd_doctor', 'eme_doctor', 'physician', 'consultant'],
+        'opd_doctor': ['doctor', 'opd_doctor'],
+        'eme_doctor': ['doctor', 'eme_doctor'],
         'nurse': ['nurse', 'staff_nurse', 'anc_nurse', 'midwife'],
         'anc_nurse': ['nurse', 'anc_nurse', 'midwife'],
         'midwife': ['midwife', 'midwifery', 'anc_midwife', 'nurse_midwife', 'nurse'],
         'anc_midwife': ['midwife', 'anc_midwife', 'midwifery', 'nurse'],
         'triage': ['triage', 'triage_nurse'],
         'triage_nurse': ['triage', 'triage_nurse'],
-        'card_office': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],
-        'cardofffice': ['card_office', 'card_office_staff', 'cardofffice', 'doctor'],
+        'card_office': ['card_office', 'card_office_staff', 'cardofffice'],
+        'cardofffice': ['card_office', 'card_office_staff', 'cardofffice'],
         'lab': ['lab', 'lab_technician', 'lab_tech'],
         'lab_technician': ['lab', 'lab_technician'],
         'radiology': ['radiology', 'radiologist', 'radio'],
@@ -397,5 +403,40 @@ export const isMidwife = (req, res, next) => {
   return res.status(403).json({ 
     success: false, 
     message: 'Midwife access required. Only midwives can access ANC services.' 
+  });
+};
+
+// Helper function to check if user is card office staff
+export const isCardOfficeStaff = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Not authorized' 
+    });
+  }
+
+  const adminTypes = ['federal', 'regional', 'zone', 'woreda', 'kebele', 'hospital'];
+  if (adminTypes.includes(req.user.userType)) {
+    return next();
+  }
+
+  if (req.user.userType === 'staff') {
+    const department = (req.user.department || '').toLowerCase();
+    const role = (req.user.role || '').toLowerCase();
+    
+    if (department.includes('card') || 
+        department.includes('office') ||
+        department === 'card_office' ||
+        department === 'cardofffice' ||
+        role === 'card_office' ||
+        role === 'card_office_staff') {
+      console.log('✅ Card Office access granted');
+      return next();
+    }
+  }
+
+  return res.status(403).json({ 
+    success: false, 
+    message: 'Card Office staff access required' 
   });
 };
