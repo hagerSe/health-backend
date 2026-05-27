@@ -756,9 +756,16 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
 };
 
 // SEND REPORT WITH MULTER (UPDATED)
+// backend/controllers/cardofficeController.js
+
 export const sendCardOfficeReport = async (req, res) => {
   try {
     const { title, body, priority, recipient_id } = req.body;
+
+    console.log('=== Sending Card Office Report ===');
+    console.log('Title:', title);
+    console.log('Recipient ID:', recipient_id);
+    console.log('Files received:', req.files?.length || 0);
 
     const sender = await HospitalStaff.findByPk(req.user.id);
     if (!sender) {
@@ -772,6 +779,7 @@ export const sendCardOfficeReport = async (req, res) => {
 
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+    // ✅ FIXED: Handle file attachments correctly
     let attachments = [];
     if (req.files && req.files.length > 0) {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -782,6 +790,7 @@ export const sendCardOfficeReport = async (req, res) => {
         size: file.size,
         uploaded_at: new Date()
       }));
+      console.log(`✅ ${attachments.length} attachment(s) processed`);
     }
 
     const report = await Report.create({
@@ -790,7 +799,7 @@ export const sendCardOfficeReport = async (req, res) => {
       body,
       priority: priority || 'medium',
       status: 'sent',
-      attachments,
+      attachments: attachments, // Store attachments as JSON
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -813,17 +822,21 @@ export const sendCardOfficeReport = async (req, res) => {
         report_id: report.id,
         title: report.title,
         priority: report.priority,
-        sender_name: formatFullName(sender)
+        sender_name: formatFullName(sender),
+        has_attachments: attachments.length > 0
       });
     }
 
-    res.status(201).json({ success: true, report, message: "Report sent successfully" });
+    res.status(201).json({ 
+      success: true, 
+      report, 
+      message: "Report sent successfully" 
+    });
   } catch (error) {
     console.error("Send card office report error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 export const replyToCardOfficeReport = async (req, res) => {
   try {
     const { body } = req.body;
@@ -840,6 +853,7 @@ export const replyToCardOfficeReport = async (req, res) => {
 
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+    // ✅ FIXED: Handle file attachment for reply
     let attachments = [];
     if (req.file) {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -850,6 +864,7 @@ export const replyToCardOfficeReport = async (req, res) => {
         size: req.file.size,
         uploaded_at: new Date()
       }];
+      console.log(`✅ Reply attachment processed: ${req.file.originalname}`);
     }
 
     const reply = await Report.create({
@@ -858,7 +873,7 @@ export const replyToCardOfficeReport = async (req, res) => {
       body,
       priority: parentReport.priority,
       status: 'sent',
-      attachments,
+      attachments: attachments,
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -887,7 +902,8 @@ export const replyToCardOfficeReport = async (req, res) => {
       io.to(`staff_${parentReport.sender_id}`).emit('report_reply_from_cardoffice', {
         report_id: reply.id,
         title: reply.title,
-        sender_name: formatFullName(sender)
+        sender_name: formatFullName(sender),
+        has_attachments: attachments.length > 0
       });
     }
 
