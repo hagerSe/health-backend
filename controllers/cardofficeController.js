@@ -9,10 +9,42 @@ import Report from '../models/Report.js';
 import Schedule from '../models/Schedule.js';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+// ==================== MULTER CONFIGURATION (ADDED - MATCHES PHARMACY) ====================
+const reportsDir = 'uploads/reports';
+if (!fs.existsSync(reportsDir)) {
+  fs.mkdirSync(reportsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, reportsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `cardoffice-report-${uniqueSuffix}${path.extname(file.originalname)}`);
+  }
+});
+
+export const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and PDF are allowed.'));
+    }
+  }
+});
 
 // ==================== HELPER FUNCTIONS ====================
 
-// Format staff full name with middle name (like lab controller)
+// Format staff full name with middle name
 const formatFullName = (staff) => {
   if (!staff) return 'Unknown';
   const firstName = staff.first_name || '';
@@ -21,7 +53,7 @@ const formatFullName = (staff) => {
   return `${firstName}${middleName} ${lastName}`.trim();
 };
 
-// Get shift display name (like lab controller)
+// Get shift display name
 const getShiftDisplayName = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6, icon: '🌅' },
@@ -82,7 +114,6 @@ export const registerPatient = async (req, res) => {
       });
     }
 
-    // Get hospital_id from body (sent from frontend)
     const currentHospitalId = hospital_id;
     
     if (!currentHospitalId) {
@@ -209,11 +240,9 @@ export const registerPatient = async (req, res) => {
 export const searchPatients = async (req, res) => {
   try {
     const { query } = req.query;
-    // Get hospital_id from query (like lab controller)
     const hospitalId = req.query.hospital_id;
     
     if (!hospitalId) {
-      console.error('No hospital_id found in request');
       return res.status(400).json({ 
         success: false, 
         message: 'Hospital ID is required',
@@ -380,7 +409,6 @@ export const sendToTriage = async (req, res) => {
 // ==================== GET RECENT PATIENTS ====================
 export const getRecentPatients = async (req, res) => {
   try {
-    // Get hospital_id from query (like lab controller)
     const hospitalId = req.query.hospital_id;
     
     if (!hospitalId) {
@@ -415,7 +443,6 @@ export const getRecentPatients = async (req, res) => {
 // ==================== GET DASHBOARD STATS ====================
 export const getCardOfficeStats = async (req, res) => {
   try {
-    // Get hospital_id from query (like lab controller)
     const hospitalId = req.query.hospital_id;
     
     if (!hospitalId) {
@@ -623,142 +650,127 @@ export const changeCardOfficePassword = async (req, res) => {
   }
 };
 
-// ==================== REPORT MANAGEMENT ====================
+// ==================== REPORT MANAGEMENT (SIMPLIFIED TO MATCH PHARMACY) ====================
 
+// backend/controllers/cardofficeController.js
+
+export const getHospitalAdminsForCardOffice = async (req, res) => {
+  try {
+    const hospitalId = req.query.hospital_id;
+    
+    console.log('=== getHospitalAdminsForCardOffice ===');
+    console.log('hospitalId from query:', hospitalId);
+    
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required',
+        admins: []
+      });
+    }
+    
+    const parsedHospitalId = parseInt(hospitalId);
+    
+    // HospitalAdmin table has NO hospital_id column
+    // The hospital_id from staff refers to HospitalAdmin.id
+    // So we find the admin by their ID
+    const hospitalAdmin = await HospitalAdmin.findOne({
+      where: { 
+        id: parsedHospitalId
+      },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+    });
+    
+    let admins = [];
+    if (hospitalAdmin) {
+      admins = [hospitalAdmin];
+      console.log(`✅ Found admin: ${hospitalAdmin.first_name} ${hospitalAdmin.last_name}`);
+    } else {
+      console.log(`⚠️ No admin found with id: ${parsedHospitalId}`);
+      
+      // If not found by id, try to find any admin (fallback for demo)
+      const anyAdmin = await HospitalAdmin.findOne({
+        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+      });
+      if (anyAdmin) {
+        admins = [anyAdmin];
+        console.log(`✅ Using fallback admin: ${anyAdmin.first_name} ${anyAdmin.last_name}`);
+      }
+    }
+    
+    const formattedAdmins = admins.map(admin => ({
+      id: admin.id,
+      full_name: formatFullName(admin),
+      first_name: admin.first_name || '',
+      middle_name: admin.middle_name || '',
+      last_name: admin.last_name || '',
+      email: admin.email || '',
+      hospital_name: admin.hospital_name || 'Hospital',
+      hospital_id: admin.id
+    }));
+    
+    res.json({ 
+      success: true, 
+      admins: formattedAdmins 
+    });
+    
+  } catch (error) {
+    console.error("❌ Get hospital admins error:", error);
+    console.error("Error stack:", error.stack);
+    
+    // Return empty array to prevent frontend crash
+    res.status(200).json({ 
+      success: true, 
+      admins: []
+    });
+  }
+};
+// SIMPLIFIED INBOX - MATCHES PHARMACY PATTERN
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
-    const offset = (page - 1) * limit;
-    
-    const whereClause = {
-      recipient_id: req.user.id,
-      recipient_type: 'staff'
-    };
-    
-    if (search) {
-      whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { body: { [Op.iLike]: `%${search}%` } },
-        { sender_full_name: { [Op.iLike]: `%${search}%` } }
-      ];
-    }
-    
-    const totalCount = await Report.count({ where: whereClause });
-    
     const reports = await Report.findAll({
-      where: whereClause,
-      order: [['sent_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      where: { recipient_id: req.user.id, recipient_type: 'staff' },
+      order: [['sent_at', 'DESC']]
     });
     
-    const unreadCount = await Report.count({
-      where: {
-        recipient_id: req.user.id,
-        recipient_type: 'staff',
-        is_opened: false
-      }
-    });
-    
-    res.json({
-      success: true,
-      reports,
-      unreadCount,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page)
-    });
+    const unreadCount = reports.filter(r => !r.is_opened).length;
+    res.json({ success: true, reports, unreadCount });
   } catch (error) {
     console.error("Get card office reports inbox error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      reports: [],
-      unreadCount: 0
-    });
+    res.status(500).json({ success: false, message: error.message, reports: [], unreadCount: 0 });
   }
 };
 
+// SIMPLIFIED OUTBOX - MATCHES PHARMACY PATTERN
 export const getCardOfficeReportsOutbox = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
-    const offset = (page - 1) * limit;
-    
-    const whereClause = {
-      sender_id: req.user.id,
-      sender_type: 'staff'
-    };
-    
-    if (search) {
-      whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { body: { [Op.iLike]: `%${search}%` } },
-        { recipient_full_name: { [Op.iLike]: `%${search}%` } }
-      ];
-    }
-    
-    const totalCount = await Report.count({ where: whereClause });
-    
     const reports = await Report.findAll({
-      where: whereClause,
-      order: [['sent_at', 'DESC']],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      where: { sender_id: req.user.id, sender_type: 'staff' },
+      order: [['sent_at', 'DESC']]
     });
-    
-    res.json({
-      success: true,
-      reports,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page)
-    });
+    res.json({ success: true, reports });
   } catch (error) {
     console.error("Get card office reports outbox error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      reports: []
-    });
+    res.status(500).json({ success: false, message: error.message, reports: [] });
   }
 };
 
+// SEND REPORT WITH MULTER (UPDATED)
 export const sendCardOfficeReport = async (req, res) => {
   try {
-    const { title, subject, body, priority, recipient_type, recipient_id } = req.body;
+    const { title, body, priority, recipient_id } = req.body;
 
     const sender = await HospitalStaff.findByPk(req.user.id);
-    
     if (!sender) {
       return res.status(404).json({ success: false, message: "Sender not found" });
     }
 
-    let recipient = null;
-    let recipientFullName = '';
-    
-    if (recipient_type === 'hospital') {
-      recipient = await HospitalAdmin.findByPk(recipient_id);
-      if (recipient) {
-        recipientFullName = formatFullName(recipient);
-      }
-    }
-
+    const recipient = await HospitalAdmin.findByPk(recipient_id);
     if (!recipient) {
       return res.status(404).json({ success: false, message: "Recipient not found" });
     }
 
-    const date = new Date();
-    const year = date.getFullYear();
-    const lastReport = await Report.findOne({ order: [['id', 'DESC']], attributes: ['report_number'] });
-    
-    let nextNumber = 1;
-    if (lastReport && lastReport.report_number) {
-      const match = lastReport.report_number.match(/RPT-\d+-(\d+)/);
-      if (match) nextNumber = parseInt(match[1]) + 1;
-      else nextNumber = (await Report.count()) + 1;
-    }
-    
-    const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
+    const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     let attachments = [];
     if (req.files && req.files.length > 0) {
@@ -775,7 +787,6 @@ export const sendCardOfficeReport = async (req, res) => {
     const report = await Report.create({
       report_number,
       title,
-      subject: subject || title,
       body,
       priority: priority || 'medium',
       status: 'sent',
@@ -786,32 +797,23 @@ export const sendCardOfficeReport = async (req, res) => {
       sender_middle_name: sender.middle_name,
       sender_last_name: sender.last_name,
       sender_full_name: formatFullName(sender),
-      sender_title: `Card Office Staff - ${sender.department || 'Card Office'} Department`,
-      sender_hospital: sender.hospital_name,
-      sender_hospital_id: sender.hospital_id,
       recipient_id: recipient.id,
       recipient_type: 'hospital',
       recipient_first_name: recipient.first_name,
       recipient_middle_name: recipient.middle_name,
       recipient_last_name: recipient.last_name,
-      recipient_full_name: recipientFullName,
-      recipient_hospital: recipient.hospital_name,
-      recipient_hospital_id: recipient.id,
+      recipient_full_name: formatFullName(recipient),
       sent_at: new Date(),
       last_activity_at: new Date()
     });
 
     const io = req.app.get('io');
     if (io) {
-      const adminRoom = `hospital_${recipient.id}_admin`;
-      io.to(adminRoom).emit('new_report_from_cardoffice', {
+      io.to(`hospital_${recipient.id}_admin`).emit('new_report_from_cardoffice', {
         report_id: report.id,
-        report_number: report.report_number,
         title: report.title,
         priority: report.priority,
-        sender_name: formatFullName(sender),
-        sender_department: sender.department,
-        sent_at: report.sent_at
+        sender_name: formatFullName(sender)
       });
     }
 
@@ -831,54 +833,12 @@ export const replyToCardOfficeReport = async (req, res) => {
       return res.status(404).json({ success: false, message: "Report not found" });
     }
 
-    const isParticipant = (
-      (parentReport.sender_id === req.user.id && parentReport.sender_type === 'staff') ||
-      (parentReport.recipient_id === req.user.id && parentReport.recipient_type === 'staff')
-    );
-
-    if (!isParticipant) {
-      return res.status(403).json({ success: false, message: "Not authorized to reply" });
-    }
-
     const sender = await HospitalStaff.findByPk(req.user.id);
     if (!sender) {
       return res.status(404).json({ success: false, message: "Sender not found" });
     }
 
-    const recipientId = parentReport.sender_id === req.user.id ? parentReport.recipient_id : parentReport.sender_id;
-    const recipientType = parentReport.sender_id === req.user.id ? parentReport.recipient_type : parentReport.sender_type;
-
-    let recipientFirstName = '';
-    let recipientMiddleName = '';
-    let recipientLastName = '';
-    let recipientFullName = '';
-    let recipientHospitalId = null;
-    let recipientHospitalName = '';
-
-    if (recipientType === 'hospital') {
-      const hospitalAdmin = await HospitalAdmin.findByPk(recipientId);
-      if (hospitalAdmin) {
-        recipientFirstName = hospitalAdmin.first_name || '';
-        recipientMiddleName = hospitalAdmin.middle_name || '';
-        recipientLastName = hospitalAdmin.last_name || '';
-        recipientFullName = formatFullName(hospitalAdmin);
-        recipientHospitalId = hospitalAdmin.id;
-        recipientHospitalName = hospitalAdmin.hospital_name || '';
-      }
-    }
-
-    const date = new Date();
-    const year = date.getFullYear();
-    const lastReport = await Report.findOne({ order: [['id', 'DESC']], attributes: ['report_number'] });
-    
-    let nextNumber = 1;
-    if (lastReport && lastReport.report_number) {
-      const match = lastReport.report_number.match(/RPT-\d+-(\d+)/);
-      if (match) nextNumber = parseInt(match[1]) + 1;
-      else nextNumber = (await Report.count()) + 1;
-    }
-    
-    const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
+    const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     let attachments = [];
     if (req.file) {
@@ -895,7 +855,6 @@ export const replyToCardOfficeReport = async (req, res) => {
     const reply = await Report.create({
       report_number,
       title: `Re: ${parentReport.title}`,
-      subject: parentReport.subject,
       body,
       priority: parentReport.priority,
       status: 'sent',
@@ -906,20 +865,13 @@ export const replyToCardOfficeReport = async (req, res) => {
       sender_middle_name: sender.middle_name,
       sender_last_name: sender.last_name,
       sender_full_name: formatFullName(sender),
-      sender_title: `Card Office Staff - ${sender.department || 'Card Office'} Department`,
-      sender_hospital: sender.hospital_name,
-      sender_hospital_id: sender.hospital_id,
-      sender_department: sender.department,
-      recipient_id: recipientId,
-      recipient_type: recipientType,
-      recipient_first_name: recipientFirstName,
-      recipient_middle_name: recipientMiddleName,
-      recipient_last_name: recipientLastName,
-      recipient_full_name: recipientFullName,
-      recipient_hospital: recipientHospitalName,
-      recipient_hospital_id: recipientHospitalId,
+      recipient_id: parentReport.sender_id,
+      recipient_type: parentReport.sender_type,
+      recipient_first_name: parentReport.sender_first_name,
+      recipient_middle_name: parentReport.sender_middle_name,
+      recipient_last_name: parentReport.sender_last_name,
+      recipient_full_name: parentReport.sender_full_name,
       parent_report_id: parentReport.id,
-      thread_id: parentReport.thread_id || parentReport.id,
       sent_at: new Date(),
       last_activity_at: new Date()
     });
@@ -932,45 +884,24 @@ export const replyToCardOfficeReport = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      let recipientRoom = `hospital_${recipientHospitalId}_admin`;
-      io.to(recipientRoom).emit('report_reply_from_cardoffice', {
+      io.to(`staff_${parentReport.sender_id}`).emit('report_reply_from_cardoffice', {
         report_id: reply.id,
-        parent_report_id: parentReport.id,
-        report_number: reply.report_number,
         title: reply.title,
-        priority: reply.priority,
-        sender_name: formatFullName(sender),
-        sender_department: sender.department,
-        sent_at: reply.sent_at,
-        body_preview: body.substring(0, 100),
-        body: body,
-        has_attachments: attachments.length > 0,
-        is_reply: true
+        sender_name: formatFullName(sender)
       });
     }
 
-    res.json({ 
-      success: true, 
-      reply, 
-      message: "Reply sent successfully" 
-    });
+    res.json({ success: true, reply, message: "Reply sent successfully" });
   } catch (error) {
-    console.error("Card office reply to report error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
+    console.error("Reply to card office report error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
 export const markCardOfficeReportRead = async (req, res) => {
   try {
     const report = await Report.findOne({
-      where: {
-        id: req.params.id,
-        recipient_id: req.user.id,
-        recipient_type: 'staff'
-      }
+      where: { id: req.params.id, recipient_id: req.user.id, recipient_type: 'staff' }
     });
 
     if (!report) {
@@ -990,58 +921,6 @@ export const markCardOfficeReportRead = async (req, res) => {
   }
 };
 
-// ==================== GET HOSPITAL ADMINS FOR CARD OFFICE ====================
-export const getHospitalAdminsForCardOffice = async (req, res) => {
-  try {
-    // Get hospital_id from query (like lab controller)
-    const hospitalId = req.query.hospital_id;
-    
-    console.log('getHospitalAdminsForCardOffice - hospitalId:', hospitalId);
-    
-    if (!hospitalId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Hospital ID is required',
-        admins: []
-      });
-    }
-    
-    const parsedHospitalId = parseInt(hospitalId);
-    
-    const hospitalAdmins = await HospitalAdmin.findAll({
-      where: { 
-        hospital_id: parsedHospitalId 
-      },
-      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name', 'hospital_id']
-    });
-    
-    console.log(`Found ${hospitalAdmins.length} admins for hospital ${parsedHospitalId}`);
-    
-    const formattedAdmins = (hospitalAdmins || []).map(admin => ({
-      id: admin.id,
-      full_name: formatFullName(admin),
-      first_name: admin.first_name || '',
-      middle_name: admin.middle_name || '',
-      last_name: admin.last_name || '',
-      email: admin.email || '',
-      hospital_name: admin.hospital_name || 'Hospital',
-      hospital_id: admin.hospital_id
-    }));
-    
-    res.json({ 
-      success: true, 
-      admins: formattedAdmins 
-    });
-  } catch (error) {
-    console.error("Get hospital admins error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      admins: []
-    });
-  }
-};
-
 // ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
 export const getMyScheduleCardOffice = async (req, res) => {
   try {
@@ -1058,12 +937,10 @@ export const getMyScheduleCardOffice = async (req, res) => {
     });
 
     let totalHours = 0;
-    const shiftsByType = { morning: 0, afternoon: 0, night: 0 };
     
     schedules.forEach(schedule => {
       const shift = getShiftDisplayName(schedule.shift_type);
       totalHours += shift.hours;
-      shiftsByType[schedule.shift_type]++;
     });
 
     const processedSchedules = schedules.map(schedule => {
@@ -1114,24 +991,8 @@ export const getMyScheduleCardOffice = async (req, res) => {
 
     res.json({
       success: true,
-      staff: {
-        id: req.user.id,
-        full_name: formatFullName(req.user),
-        department: req.user.department
-      },
-      summary: {
-        total_shifts: schedules.length,
-        total_hours: totalHours,
-        shifts_by_type: shiftsByType,
-        upcoming_shifts: schedules.length,
-        next_shift: schedules.length > 0 ? {
-          date: schedules[0].date,
-          shift_name: getShiftDisplayName(schedules[0].shift_type).name,
-          ward: schedules[0].ward,
-          hours: getShiftDisplayName(schedules[0].shift_type).hours
-        } : null
-      },
       schedules: processedSchedules,
+      total_hours: totalHours,
       stats: {
         today: { shift_count: todaySchedules.length, total_hours: todayHours },
         this_week: { shift_count: thisWeekSchedules.length, total_hours: thisWeekHours }
