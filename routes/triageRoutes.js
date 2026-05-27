@@ -1,7 +1,6 @@
 // backend/routes/triageRoutes.js
 import express from 'express';
 import { protect, restrictTo } from '../middleware/auth.js';
-import upload from '../middleware/upload.js';
 import {
   getTriageQueue,
   getTriagedPatients,
@@ -16,27 +15,33 @@ import {
   sendTriageReport,
   replyToTriageReport,
   markTriageReportRead,
-  getHospitalAdminsForTriage
+  getHospitalAdminsForTriage,
+  getMyScheduleTriage,
+  upload
 } from '../controllers/triageController.js';
 
 const router = express.Router();
 
+// Apply authentication and role restriction
 router.use(protect);
 router.use(restrictTo('triage'));
 
-// Triage Queue Routes
+// ==================== TRIAGE QUEUE ROUTES ====================
 router.get('/queue', getTriageQueue);
 router.get('/triaged', getTriagedPatients);
 router.get('/patient/:id', getPatientForTriage);
 router.post('/send-to-ward', recordVitalsAndSendToWard);
 router.get('/stats', getTriageStats);
 
-// Profile Routes
+// ==================== SCHEDULE ROUTE ====================
+router.get('/my-schedule', getMyScheduleTriage);
+
+// ==================== PROFILE ROUTES ====================
 router.get('/profile', getTriageProfile);
 router.put('/profile', updateTriageProfile);
 router.put('/change-password', changeTriagePassword);
 
-// Report Routes
+// ==================== REPORT ROUTES ====================
 router.get('/reports/inbox', getTriageReportsInbox);
 router.get('/reports/outbox', getTriageReportsOutbox);
 router.post('/reports/send', upload.array('attachments', 10), sendTriageReport);
