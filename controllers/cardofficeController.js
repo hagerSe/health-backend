@@ -1121,7 +1121,7 @@ export const replyToCardOfficeReport = async (req, res) => {
     });
   }
 };
-
+// In cardofficeController.js - fix this function
 export const markCardOfficeReportRead = async (req, res) => {
   try {
     const { hospital_id } = req.body;
@@ -1131,12 +1131,13 @@ export const markCardOfficeReportRead = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Hospital ID is required' });
     }
     
+    // FIX: Remove recipient_hospital_id from WHERE clause
     const report = await Report.findOne({
       where: {
         id: req.params.id,
         recipient_id: req.user.id,
-        recipient_type: 'staff',
-        recipient_hospital_id: currentHospitalId
+        recipient_type: 'staff'
+        // recipient_hospital_id - REMOVED - this column doesn't exist
       }
     });
 

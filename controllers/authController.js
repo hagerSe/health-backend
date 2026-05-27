@@ -429,11 +429,19 @@ export const login = async (req, res) => {
       model: userModel
     };
     
-    const token = jwt.sign(
-      tokenPayload,
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    );
+ // In your authController.js login function
+const token = jwt.sign(
+  { 
+    id: user.id, 
+    email: user.email, 
+    type: 'staff',
+    role: user.role,
+    department: user.department,
+    hospital_id: user.hospital_id  // ← CRITICAL: Include this
+  },
+    process.env.JWT_SECRET || 'your-secret-key',
+  { expiresIn: '7d' }
+);
 
     console.log("✅ JWT token generated");
 
