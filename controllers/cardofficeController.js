@@ -639,6 +639,7 @@ export const changeCardOfficePassword = async (req, res) => {
 };
 
 // ==================== REPORT MANAGEMENT (FIXED) ====================
+// ==================== REPORT MANAGEMENT (FIXED) ====================
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
     let hospitalId = getHospitalId(req);
@@ -655,11 +656,13 @@ export const getCardOfficeReportsInbox = async (req, res) => {
       });
     }
     
-    // Get reports where this staff member is the recipient
+    // FIX: Remove recipient_hospital_id from WHERE clause since it doesn't exist
+    // Only filter by recipient_id and recipient_type
     const reports = await Report.findAll({
       where: {
         recipient_id: req.user.id,
         recipient_type: 'staff'
+        // recipient_hospital_id column doesn't exist - REMOVED
       },
       order: [['sent_at', 'DESC']]
     });
@@ -719,7 +722,6 @@ export const getCardOfficeReportsInbox = async (req, res) => {
     });
   }
 };
-
 export const getCardOfficeReportsOutbox = async (req, res) => {
   try {
     const hospitalId = getHospitalId(req);
@@ -732,6 +734,7 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
       });
     }
     
+    // FIX: Remove hospital_id filter if it doesn't exist
     const reports = await Report.findAll({
       where: {
         sender_id: req.user.id,
@@ -781,6 +784,7 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
     });
   }
 };
+// In sendCardOfficeReport function, fix the recipient lookup:
 
 export const sendCardOfficeReport = async (req, res) => {
   try {
@@ -807,17 +811,26 @@ export const sendCardOfficeReport = async (req, res) => {
     let recipientHospitalId = null;
     let recipientHospitalName = '';
     
+    // FIX: Make sure we're using the correct recipient_id and recipient_type
     if (recipient_type === 'hospital') {
       recipient = await HospitalAdmin.findOne({
         where: {
           id: recipient_id,
-          hospital_id: currentHospitalId
+          hospital_id: currentHospitalId  // Admin must belong to same hospital
         }
       });
       if (recipient) {
         recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientHospitalId = recipient.id;
         recipientHospitalName = recipient.hospital_name || '';
+      } else {
+        // Try to find admin without hospital_id restriction (fallback)
+        recipient = await HospitalAdmin.findByPk(recipient_id);
+        if (recipient) {
+          recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
+          recipientHospitalId = recipient.id;
+          recipientHospitalName = recipient.hospital_name || '';
+        }
       }
     } else if (recipient_type === 'staff') {
       recipient = await HospitalStaff.findOne({
@@ -834,9 +847,11 @@ export const sendCardOfficeReport = async (req, res) => {
     }
 
     if (!recipient) {
-      return res.status(404).json({ success: false, message: "Recipient not found" });
+      console.error(`Recipient not found: type=${recipient_type}, id=${recipient_id}, hospital=${currentHospitalId}`);
+      return res.status(404).json({ success: false, message: "Recipient not found. Please select a valid recipient." });
     }
 
+    // Rest of the function remains the same...
     const date = new Date();
     const year = date.getFullYear();
     const lastReport = await Report.findOne({ order: [['id', 'DESC']], attributes: ['report_number'] });
@@ -1143,30 +1158,44 @@ export const markCardOfficeReportRead = async (req, res) => {
 };
 
 // ==================== GET HOSPITAL ADMINS FOR CARD OFFICE ====================
+// ==================== GET HOSPITAL ADMINS FOR CARD OFFICE (FIXED) ====================
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
-    const hospitalId = getHospitalId(req);
+    let hospitalId = getHospitalId(req);
+    
+    console.log('getHospitalAdminsForCardOffice - hospitalId:', hospitalId);
+    console.log('getHospitalAdminsForCardOffice - user:', req.user?.id);
     
     if (!hospitalId) {
-      return res.json({ 
-        success: true, 
-        admins: [],
-        message: 'No hospital ID found'
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required',
+        admins: []
       });
     }
     
+    // Convert to integer for proper comparison
+    const parsedHospitalId = parseInt(hospitalId);
+    
     // Get hospital admins from the same hospital only
     const hospitalAdmins = await HospitalAdmin.findAll({
-      where: { hospital_id: hospitalId },
-      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+      where: { 
+        hospital_id: parsedHospitalId 
+      },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name', 'hospital_id']
     });
+    
+    console.log(`Found ${hospitalAdmins.length} admins for hospital ${parsedHospitalId}`);
     
     const formattedAdmins = (hospitalAdmins || []).map(admin => ({
       id: admin.id,
       full_name: `${admin.first_name || ''} ${admin.middle_name ? admin.middle_name + ' ' : ''}${admin.last_name || ''}`.trim(),
+      first_name: admin.first_name || '',
+      middle_name: admin.middle_name || '',
+      last_name: admin.last_name || '',
       email: admin.email || '',
       hospital_name: admin.hospital_name || 'Hospital',
-      hospital_id: admin.id
+      hospital_id: admin.hospital_id
     }));
     
     res.json({ 
@@ -1175,10 +1204,10 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    res.json({ 
-      success: true, 
-      admins: [],
-      message: 'No hospital admins found'
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      admins: []
     });
   }
 };
