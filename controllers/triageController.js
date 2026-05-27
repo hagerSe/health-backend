@@ -518,3 +518,68 @@ export const getMyScheduleTriage = async (req, res) => {
     res.status(500).json({ success: false, message: error.message, schedules: [], total_hours: 0 });
   }
 };
+// ==================== GET PATIENT BY ID FOR TRIAGE ====================
+export const getPatientForTriage = async (req, res) => {
+  try {
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required' 
+      });
+    }
+    
+    const patient = await Patient.findOne({
+      where: {
+        id: req.params.id,
+        hospital_id: parseInt(hospitalId)
+      }
+    });
+
+    if (!patient) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Patient not found' 
+      });
+    }
+
+    // Get recent visits for this patient
+    const visits = await Visit.findAll({
+      where: { patient_id: patient.id },
+      order: [['created_at', 'DESC']],
+      limit: 5
+    });
+
+    res.json({
+      success: true,
+      patient,
+      visits
+    });
+  } catch (error) {
+    console.error('Error getting patient for triage:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+};
+// ==================== EXPORTS ====================
+export { 
+  upload,
+  getTriageQueue,
+  getTriagedPatients,
+  getPatientForTriage,        // ← ADD THIS (currently missing)
+  recordVitalsAndSendToWard,
+  getTriageStats,
+  getTriageProfile,
+  updateTriageProfile,
+  changeTriagePassword,
+  getTriageReportsInbox,
+  getTriageReportsOutbox,
+  sendTriageReport,
+  replyToTriageReport,
+  markTriageReportRead,
+  getHospitalAdminsForTriage,
+  getMyScheduleTriage
+};
