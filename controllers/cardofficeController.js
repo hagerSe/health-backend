@@ -1,8 +1,8 @@
-// backend/controllers/cardofficeController.js
-
+// backend/controllers/triageController.js
 import Patient from '../models/Patient.js';
 import Visit from '../models/Visit.js';
 import Notification from '../models/Notification.js';
+import VitalSign from '../models/VitalSign.js';
 import HospitalStaff from '../models/HospitalStaff.js';
 import HospitalAdmin from '../models/HospitalAdmin.js';
 import Report from '../models/Report.js';
@@ -13,38 +13,31 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-// ==================== MULTER CONFIGURATION (ADDED - MATCHES PHARMACY) ====================
+// ==================== MULTER CONFIGURATION ====================
 const reportsDir = 'uploads/reports';
 if (!fs.existsSync(reportsDir)) {
   fs.mkdirSync(reportsDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, reportsDir);
-  },
+  destination: (req, file, cb) => { cb(null, reportsDir); },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `cardoffice-report-${uniqueSuffix}${path.extname(file.originalname)}`);
+    cb(null, `triage-report-${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
-export const upload = multer({ 
+export const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and PDF are allowed.'));
-    }
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Invalid file type'));
   }
 });
 
 // ==================== HELPER FUNCTIONS ====================
-
-// Format staff full name with middle name
 const formatFullName = (staff) => {
   if (!staff) return 'Unknown';
   const firstName = staff.first_name || '';
@@ -53,7 +46,6 @@ const formatFullName = (staff) => {
   return `${firstName}${middleName} ${lastName}`.trim();
 };
 
-// Get shift display name
 const getShiftDisplayName = (shiftType) => {
   const shifts = {
     morning: { name: 'Morning', start: '08:00', end: '14:00', hours: 6, icon: '🌅' },
@@ -63,7 +55,6 @@ const getShiftDisplayName = (shiftType) => {
   return shifts[shiftType] || { name: shiftType, start: '--:--', end: '--:--', hours: 0, icon: '📅' };
 };
 
-// Generate visit number
 const generateVisitNumber = async () => {
   try {
     const date = new Date();
@@ -78,671 +69,282 @@ const generateVisitNumber = async () => {
     endOfDay.setHours(23, 59, 59, 999);
     
     const todayCount = await Visit.count({
-      where: {
-        created_at: {
-          [Op.between]: [startOfDay, endOfDay]
-        }
-      }
+      where: { created_at: { [Op.between]: [startOfDay, endOfDay] } }
     });
     
     const sequence = String(todayCount + 1).padStart(4, '0');
-    const visitNumber = `VIS-${dateStr}-${sequence}`;
-    return visitNumber;
+    return `VIS-${dateStr}-${sequence}`;
   } catch (error) {
-    console.error('Error generating visit number:', error);
     return `VIS-${Date.now()}`;
   }
 };
 
-// ==================== REGISTER NEW PATIENT ====================
-export const registerPatient = async (req, res) => {
+const determinePriority = (ward, vitals) => {
+  let priority = 'routine';
+  if (ward === 'EME') priority = 'urgent';
+  
+  if (vitals?.blood_pressure) {
+    const systolic = parseInt(vitals.blood_pressure.split('/')[0]);
+    if (systolic > 180) priority = 'critical';
+    else if (systolic > 140) priority = 'high';
+  }
+  if (vitals?.oxygen_saturation && parseInt(vitals.oxygen_saturation) < 90) priority = 'critical';
+  if (vitals?.temperature) {
+    const temp = parseFloat(vitals.temperature);
+    if (temp > 39 || temp < 35) priority = 'critical';
+    else if (temp > 38 || temp < 36) priority = 'high';
+  }
+  if (vitals?.heart_rate) {
+    const hr = parseInt(vitals.heart_rate);
+    if (hr > 120 || hr < 50) priority = 'critical';
+    else if (hr > 100 || hr < 60) priority = 'high';
+  }
+  return priority;
+};
+
+const calculateBMI = (weight, height) => {
+  if (weight && height && height > 0) {
+    const heightInM = height / 100;
+    return (weight / (heightInM * heightInM)).toFixed(1);
+  }
+  return null;
+};
+
+// ==================== TRIAGE QUEUE ====================
+export const getTriageQueue = async (req, res) => {
   try {
-    const {
-      first_name,
-      middle_name,
-      last_name,
-      age,
-      gender,
-      phone,
-      hospital_id
-    } = req.body;
-
-    if (!first_name || !last_name || !age || !gender) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide all required fields'
-      });
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    if (!hospitalId) {
+      return res.status(400).json({ success: false, message: 'Hospital ID is required', patients: [] });
     }
-
-    const currentHospitalId = hospital_id;
-    
-    if (!currentHospitalId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Hospital ID is required'
-      });
-    }
-
-    const year = new Date().getFullYear();
-    
-    const lastPatient = await Patient.findOne({
-      where: { hospital_id: parseInt(currentHospitalId) },
-      order: [['createdAt', 'DESC']],
-      attributes: ['card_number']
+    const patients = await Patient.findAll({
+      where: { hospital_id: parseInt(hospitalId), status: 'in_triage' },
+      order: [['registered_at', 'ASC']]
     });
-    
-    let sequence = 1;
-    if (lastPatient && lastPatient.card_number) {
-      const parts = lastPatient.card_number.split('/');
-      if (parts.length === 2) {
-        const lastNumber = parseInt(parts[1]);
-        if (!isNaN(lastNumber)) {
-          sequence = lastNumber + 1;
-        }
-      }
-    }
-    
-    const card_number = `${year}/${String(sequence).padStart(4, '0')}`;
-
-    const patient = await Patient.create({
-      card_number,
-      first_name,
-      middle_name,
-      last_name,
-      age,
-      gender,
-      phone,
-      hospital_id: parseInt(currentHospitalId),
-      status: 'in_triage',
-      registered_at: new Date(),
-      registered_by: req.user?.full_name || formatFullName(req.user) || 'Card Office Staff',
-      registered_by_id: req.user?.id
-    });
-
-    const visitNumber = await generateVisitNumber();
-    
-    await Visit.create({
-      patient_id: patient.id,
-      hospital_id: parseInt(currentHospitalId),
-      visit_number: visitNumber,
-      visit_type: 'OPD',
-      status: 'active',
-      started_at: new Date()
-    });
-
-    await Notification.create({
-      recipient_id: patient.id,
-      recipient_type: 'triage_nurse',
-      hospital_id: parseInt(currentHospitalId),
-      title: 'New Patient Registered',
-      message: `Patient ${first_name} ${last_name} is waiting for triage.`,
-      type: 'new_patient',
-      priority: 'medium',
-      reference_id: patient.id,
-      data: {
-        patient_id: patient.id,
-        card_number: patient.card_number,
-        patient_name: `${first_name} ${middle_name ? middle_name + ' ' : ''}${last_name}`,
-        age,
-        gender,
-        phone
-      }
-    });
-
-    const io = req.app.get('io');
-    if (io) {
-      const triageRoom = `hospital_${currentHospitalId}_triage`;
-      io.to(triageRoom).emit('new_patient_registered', {
-        patient_id: patient.id,
-        card_number: patient.card_number,
-        patient_name: `${first_name} ${middle_name ? middle_name + ' ' : ''}${last_name}`,
-        age,
-        gender,
-        phone,
-        status: 'in_triage',
-        registered_at: new Date(),
-        hospital_id: currentHospitalId
-      });
-
-      const cardOfficeRoom = `hospital_${currentHospitalId}_cardoffice`;
-      io.to(cardOfficeRoom).emit('patient_registered', {
-        patient_id: patient.id,
-        card_number: patient.card_number,
-        patient_name: `${first_name} ${last_name}`,
-        status: 'in_triage'
-      });
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Patient registered successfully and sent to triage',
-      patient: {
-        id: patient.id,
-        card_number: patient.card_number,
-        first_name: patient.first_name,
-        middle_name: patient.middle_name,
-        last_name: patient.last_name,
-        age: patient.age,
-        gender: patient.gender,
-        phone: patient.phone,
-        status: patient.status,
-        registered_at: patient.registered_at
-      }
-    });
-
+    res.json({ success: true, patients: patients || [] });
   } catch (error) {
-    console.error('Patient registration error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message, patients: [] });
   }
 };
 
-// ==================== SEARCH PATIENTS ====================
-export const searchPatients = async (req, res) => {
+export const getTriagedPatients = async (req, res) => {
   try {
-    const { query } = req.query;
-    const hospitalId = req.query.hospital_id;
-    
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
     if (!hospitalId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Hospital ID is required',
-        patients: [],
-        count: 0
-      });
+      return res.status(400).json({ success: false, message: 'Hospital ID is required', patients: [] });
     }
-    
-    const whereClause = {
-      hospital_id: parseInt(hospitalId)
-    };
-
-    if (query && query.trim()) {
-      whereClause[Op.or] = [
-        { card_number: { [Op.like]: `%${query}%` } },
-        { first_name: { [Op.like]: `%${query}%` } },
-        { middle_name: { [Op.like]: `%${query}%` } },
-        { last_name: { [Op.like]: `%${query}%` } },
-        { phone: { [Op.like]: `%${query}%` } }
-      ];
-    }
-
     const patients = await Patient.findAll({
-      where: whereClause,
-      order: [['registered_at', 'DESC']],
+      where: { hospital_id: parseInt(hospitalId), status: { [Op.in]: ['in_opd', 'in_emergency', 'in_anc'] } },
+      order: [['triaged_at', 'DESC']],
       limit: 50
     });
-
-    res.json({
-      success: true,
-      patients: patients || [],
-      count: patients?.length || 0
-    });
-
+    res.json({ success: true, patients: patients || [] });
   } catch (error) {
-    console.error('Patient search error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message || 'Error searching patients',
-      patients: [],
-      count: 0
-    });
+    res.status(500).json({ success: false, message: error.message, patients: [] });
   }
 };
 
-// ==================== GET PATIENT BY ID ====================
-export const getPatientById = async (req, res) => {
+export const getPatientForTriage = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id;
-    
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
     if (!hospitalId) {
       return res.status(400).json({ success: false, message: 'Hospital ID is required' });
     }
-    
     const patient = await Patient.findOne({
-      where: {
-        id: req.params.id,
-        hospital_id: parseInt(hospitalId)
-      }
+      where: { id: req.params.id, hospital_id: parseInt(hospitalId) }
     });
-
     if (!patient) {
       return res.status(404).json({ success: false, message: 'Patient not found' });
     }
-
     const visits = await Visit.findAll({
       where: { patient_id: patient.id },
-      order: [['created_at', 'DESC']]
+      order: [['created_at', 'DESC']],
+      limit: 5
     });
-
-    res.json({
-      success: true,
-      patient,
-      visits
-    });
-
+    res.json({ success: true, patient, visits });
   } catch (error) {
-    console.error('Error fetching patient:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==================== SEND RETURNING PATIENT TO TRIAGE ====================
-export const sendToTriage = async (req, res) => {
+// ==================== RECORD VITALS AND SEND TO WARD ====================
+export const recordVitalsAndSendToWard = async (req, res) => {
   try {
-    const { patientId, reason, hospital_id } = req.body;
-    const currentHospitalId = hospital_id;
-
-    if (!currentHospitalId) {
-      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
+    const { patientId, vitals, ward, notes } = req.body;
+    const hospitalId = req.user.hospital_id;
+    
+    if (!patientId || !ward) {
+      return res.status(400).json({ success: false, message: 'Patient ID and ward are required' });
     }
 
-    const patient = await Patient.findOne({
-      where: {
-        id: patientId,
-        hospital_id: parseInt(currentHospitalId)
-      }
-    });
+    const patient = await Patient.findByPk(patientId);
+    if (!patient) return res.status(404).json({ success: false, message: 'Patient not found' });
 
-    if (!patient) {
-      return res.status(404).json({ success: false, message: 'Patient not found' });
-    }
+    const statusMap = { 'OPD': 'in_opd', 'EME': 'in_emergency', 'ANC': 'in_anc' };
+    const priority = determinePriority(ward, vitals);
+    const bmi = calculateBMI(vitals.weight, vitals.height);
 
     await patient.update({
-      status: 'in_triage',
-      return_reason: reason,
-      returned_at: new Date()
+      vitals: { ...vitals, bmi, recorded_at: new Date(), recorded_by: formatFullName(req.user), recorded_by_id: req.user.id },
+      triage_info: { triaged_by: formatFullName(req.user), triaged_by_id: req.user.id, triaged_at: new Date(), destination: ward, ward, priority, notes: notes || vitals.chief_complaint },
+      status: statusMap[ward], ward, triaged_at: new Date()
     });
 
     const visitNumber = await generateVisitNumber();
-    
-    await Visit.create({
-      patient_id: patient.id,
-      hospital_id: parseInt(currentHospitalId),
-      visit_number: visitNumber,
-      visit_type: 'Follow-up',
-      status: 'active',
-      chief_complaint: reason,
-      started_at: new Date(),
-      is_return_visit: true
-    });
+    let visit = await Visit.findOne({ where: { patient_id: patient.id, status: 'active' } });
 
-    await Notification.create({
-      recipient_id: patient.id,
-      recipient_type: 'triage_nurse',
-      hospital_id: parseInt(currentHospitalId),
-      title: 'Returning Patient',
-      message: `Patient ${patient.first_name} ${patient.last_name} has returned. Reason: ${reason}`,
-      type: 'return_patient',
-      priority: 'medium',
-      reference_id: patient.id,
-      data: {
-        patient_id: patient.id,
-        card_number: patient.card_number,
-        patient_name: `${patient.first_name} ${patient.middle_name || ''} ${patient.last_name}`,
-        reason,
-        is_return: true
-      }
+    if (visit) {
+      await visit.update({
+        status: 'active', ward, chief_complaint: vitals.chief_complaint || vitals.notes,
+        triage_vitals: { ...vitals, bmi, priority }, triage_nurse: formatFullName(req.user),
+        triage_nurse_id: req.user.id, triaged_at: new Date()
+      });
+    } else {
+      const visitType = ward === 'OPD' ? 'OPD' : ward === 'EME' ? 'Emergency' : 'ANC';
+      await Visit.create({
+        patient_id: patient.id, hospital_id: hospitalId, visit_number: visitNumber, ward,
+        visit_type: visitType, status: 'active', chief_complaint: vitals.chief_complaint || vitals.notes,
+        triage_vitals: { ...vitals, bmi, priority }, triage_nurse: formatFullName(req.user),
+        triage_nurse_id: req.user.id, triaged_at: new Date(), started_at: new Date()
+      });
+    }
+
+    await VitalSign.create({
+      patient_id: patient.id, recorded_by_id: req.user.id, recorded_by_name: formatFullName(req.user),
+      blood_pressure: vitals.blood_pressure || null, temperature: vitals.temperature ? parseFloat(vitals.temperature) : null,
+      heart_rate: vitals.heart_rate ? parseInt(vitals.heart_rate) : null,
+      respiratory_rate: vitals.respiratory_rate ? parseInt(vitals.respiratory_rate) : null,
+      oxygen_saturation: vitals.oxygen_saturation ? parseInt(vitals.oxygen_saturation) : null,
+      weight: vitals.weight ? parseFloat(vitals.weight) : null, height: vitals.height ? parseFloat(vitals.height) : null,
+      bmi: bmi ? parseFloat(bmi) : null, pain_level: vitals.pain_level ? parseInt(vitals.pain_level) : null,
+      consciousness: vitals.consciousness || 'Alert', is_pregnant: vitals.is_pregnant || false,
+      weeks_pregnant: vitals.weeks_pregnant ? parseInt(vitals.weeks_pregnant) : null,
+      is_critical: priority === 'critical' || priority === 'urgent',
+      notes: notes || vitals.chief_complaint || null
     });
 
     const io = req.app.get('io');
     if (io) {
-      io.to(`hospital_${currentHospitalId}_triage`).emit('returning_patient', {
-        patient_id: patient.id,
-        card_number: patient.card_number,
-        patient_name: `${patient.first_name} ${patient.middle_name || ''} ${patient.last_name}`,
-        reason,
-        status: 'in_triage'
+      io.to(`hospital_${hospitalId}_ward_${ward}`).emit('new_patient_in_ward', {
+        patient_id: patient.id, card_number: patient.card_number,
+        patient_name: `${patient.first_name} ${patient.last_name}`, age: patient.age, gender: patient.gender,
+        vitals: { ...vitals, bmi, priority }, priority, ward, hospital_id: hospitalId,
+        triage_nurse: formatFullName(req.user), message: `New patient assigned to ${ward} Ward`, timestamp: new Date()
       });
+      io.to(`hospital_${hospitalId}_triage`).emit('patient_removed_from_triage', { patient_id: patient.id });
     }
 
     res.json({
       success: true,
-      message: 'Patient sent to triage successfully',
-      patient
+      message: `Patient sent to ${ward} Ward successfully`,
+      patient: { id: patient.id, card_number: patient.card_number, first_name: patient.first_name, last_name: patient.last_name, status: patient.status, ward: patient.ward, triaged_at: patient.triaged_at }
     });
-
   } catch (error) {
-    console.error('Error sending to triage:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Error in recordVitalsAndSendToWard:', error);
+    res.status(500).json({ success: false, message: error.message || 'Error processing patient' });
   }
 };
 
-// ==================== GET RECENT PATIENTS ====================
-export const getRecentPatients = async (req, res) => {
+// ==================== GET TRIAGE DASHBOARD STATS ====================
+export const getTriageStats = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id;
-    
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
     if (!hospitalId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Hospital ID is required',
-        patients: []
-      });
+      return res.status(400).json({ success: false, message: 'Hospital ID is required', stats: { waiting: 0, opd: 0, eme: 0, anc: 0 } });
     }
-    
-    const patients = await Patient.findAll({
-      where: { hospital_id: parseInt(hospitalId) },
-      order: [['registered_at', 'DESC']],
-      limit: 20
-    });
-
-    res.json({
-      success: true,
-      patients: patients || []
-    });
-
+    const [waiting, opd, eme, anc] = await Promise.all([
+      Patient.count({ where: { hospital_id: parseInt(hospitalId), status: 'in_triage' } }),
+      Patient.count({ where: { hospital_id: parseInt(hospitalId), ward: 'OPD', status: 'in_opd' } }),
+      Patient.count({ where: { hospital_id: parseInt(hospitalId), ward: 'EME', status: 'in_emergency' } }),
+      Patient.count({ where: { hospital_id: parseInt(hospitalId), ward: 'ANC', status: 'in_anc' } })
+    ]);
+    res.json({ success: true, stats: { waiting, opd, eme, anc } });
   } catch (error) {
-    console.error('Error fetching recent patients:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      patients: []
-    });
-  }
-};
-
-// ==================== GET DASHBOARD STATS ====================
-export const getCardOfficeStats = async (req, res) => {
-  try {
-    const hospitalId = req.query.hospital_id;
-    
-    if (!hospitalId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Hospital ID is required',
-        stats: { today: 0, inTriage: 0, active: 0, total: 0 }
-      });
-    }
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const todayRegistrations = await Patient.count({
-      where: {
-        hospital_id: parseInt(hospitalId),
-        registered_at: { [Op.gte]: today }
-      }
-    });
-
-    const inTriage = await Patient.count({
-      where: {
-        hospital_id: parseInt(hospitalId),
-        status: 'in_triage'
-      }
-    });
-
-    const activePatients = await Patient.count({
-      where: {
-        hospital_id: parseInt(hospitalId),
-        status: { [Op.in]: ['in_triage', 'in_opd', 'in_emergency', 'in_anc', 'with_doctor'] }
-      }
-    });
-
-    const totalPatients = await Patient.count({
-      where: { hospital_id: parseInt(hospitalId) }
-    });
-
-    res.json({
-      success: true,
-      stats: {
-        today: todayRegistrations || 0,
-        inTriage: inTriage || 0,
-        active: activePatients || 0,
-        total: totalPatients || 0
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      stats: { today: 0, inTriage: 0, active: 0, total: 0 }
-    });
-  }
-};
-
-// ==================== UPDATE PATIENT ====================
-export const updatePatient = async (req, res) => {
-  try {
-    const { first_name, middle_name, last_name, phone } = req.body;
-    const hospitalId = req.query.hospital_id;
-
-    if (!hospitalId) {
-      return res.status(400).json({ success: false, message: 'Hospital ID is required' });
-    }
-
-    const patient = await Patient.findOne({
-      where: {
-        id: req.params.id,
-        hospital_id: parseInt(hospitalId)
-      }
-    });
-
-    if (!patient) {
-      return res.status(404).json({ success: false, message: 'Patient not found' });
-    }
-
-    await patient.update({
-      first_name: first_name || patient.first_name,
-      middle_name: middle_name !== undefined ? middle_name : patient.middle_name,
-      last_name: last_name || patient.last_name,
-      phone: phone !== undefined ? phone : patient.phone
-    });
-
-    res.json({
-      success: true,
-      message: 'Patient updated successfully',
-      patient
-    });
-
-  } catch (error) {
-    console.error('Error updating patient:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message, stats: { waiting: 0, opd: 0, eme: 0, anc: 0 } });
   }
 };
 
 // ==================== STAFF PROFILE MANAGEMENT ====================
-export const getCardOfficeProfile = async (req, res) => {
+export const getTriageProfile = async (req, res) => {
   try {
-    const staff = await HospitalStaff.findByPk(req.user.id, {
-      attributes: { exclude: ['password'] }
-    });
-    
-    if (!staff) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Staff not found" 
-      });
-    }
-    
-    res.json({ 
-      success: true, 
-      staff: {
-        ...staff.toJSON(),
-        full_name: formatFullName(staff)
-      }
-    });
+    const staff = await HospitalStaff.findByPk(req.user.id, { attributes: { exclude: ['password'] } });
+    if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
+    res.json({ success: true, staff: { ...staff.toJSON(), full_name: formatFullName(staff) } });
   } catch (error) {
-    console.error("Get card office profile error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-export const updateCardOfficeProfile = async (req, res) => {
+export const updateTriageProfile = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, gender, age, phone } = req.body;
-    
     const staff = await HospitalStaff.findByPk(req.user.id);
-    
-    if (!staff) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Staff not found" 
-      });
-    }
-    
+    if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
     await staff.update({
-      first_name: first_name || staff.first_name,
-      middle_name: middle_name !== undefined ? middle_name : staff.middle_name,
-      last_name: last_name || staff.last_name,
-      gender: gender || staff.gender,
-      age: age || staff.age,
-      phone: phone !== undefined ? phone : staff.phone
+      first_name: first_name || staff.first_name, middle_name: middle_name !== undefined ? middle_name : staff.middle_name,
+      last_name: last_name || staff.last_name, gender: gender || staff.gender,
+      age: age || staff.age, phone: phone !== undefined ? phone : staff.phone
     });
-    
-    const updatedStaff = await HospitalStaff.findByPk(req.user.id, {
-      attributes: { exclude: ['password'] }
-    });
-    
-    res.json({ 
-      success: true, 
-      staff: updatedStaff,
-      message: "Profile updated successfully" 
-    });
+    const updatedStaff = await HospitalStaff.findByPk(req.user.id, { attributes: { exclude: ['password'] } });
+    res.json({ success: true, staff: updatedStaff, message: "Profile updated successfully" });
   } catch (error) {
-    console.error("Update card office profile error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-export const changeCardOfficePassword = async (req, res) => {
+export const changeTriagePassword = async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
-    
     const staff = await HospitalStaff.findByPk(req.user.id);
-    
-    if (!staff) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Staff not found" 
-      });
-    }
-    
+    if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
     const isMatch = await bcrypt.compare(current_password, staff.password);
-    if (!isMatch) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Current password is incorrect" 
-      });
-    }
-    
+    if (!isMatch) return res.status(400).json({ success: false, message: "Current password is incorrect" });
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(new_password, salt);
-    
     await staff.update({ password: hashedPassword });
-    
-    res.json({ 
-      success: true, 
-      message: "Password changed successfully" 
-    });
+    res.json({ success: true, message: "Password changed successfully" });
   } catch (error) {
-    console.error("Change password error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==================== REPORT MANAGEMENT (SIMPLIFIED TO MATCH PHARMACY) ====================
-
-// backend/controllers/cardofficeController.js
-
-export const getHospitalAdminsForCardOffice = async (req, res) => {
+// ==================== REPORT MANAGEMENT ====================
+export const getHospitalAdminsForTriage = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id;
-    
-    console.log('=== getHospitalAdminsForCardOffice ===');
-    console.log('hospitalId from query:', hospitalId);
-    
+    const hospitalId = req.query.hospital_id || req.user.hospital_id;
     if (!hospitalId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Hospital ID is required',
-        admins: []
-      });
+      return res.status(400).json({ success: false, message: 'Hospital ID is required', admins: [] });
     }
-    
-    const parsedHospitalId = parseInt(hospitalId);
-    
-    // HospitalAdmin table has NO hospital_id column
-    // The hospital_id from staff refers to HospitalAdmin.id
-    // So we find the admin by their ID
     const hospitalAdmin = await HospitalAdmin.findOne({
-      where: { 
-        id: parsedHospitalId
-      },
+      where: { id: parseInt(hospitalId) },
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
-    
-    let admins = [];
-    if (hospitalAdmin) {
-      admins = [hospitalAdmin];
-      console.log(`✅ Found admin: ${hospitalAdmin.first_name} ${hospitalAdmin.last_name}`);
-    } else {
-      console.log(`⚠️ No admin found with id: ${parsedHospitalId}`);
-      
-      // If not found by id, try to find any admin (fallback for demo)
-      const anyAdmin = await HospitalAdmin.findOne({
-        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
-      });
-      if (anyAdmin) {
-        admins = [anyAdmin];
-        console.log(`✅ Using fallback admin: ${anyAdmin.first_name} ${anyAdmin.last_name}`);
-      }
-    }
-    
+    const admins = hospitalAdmin ? [hospitalAdmin] : [];
     const formattedAdmins = admins.map(admin => ({
-      id: admin.id,
-      full_name: formatFullName(admin),
-      first_name: admin.first_name || '',
-      middle_name: admin.middle_name || '',
-      last_name: admin.last_name || '',
-      email: admin.email || '',
-      hospital_name: admin.hospital_name || 'Hospital',
-      hospital_id: admin.id
+      id: admin.id, full_name: formatFullName(admin), first_name: admin.first_name || '',
+      middle_name: admin.middle_name || '', last_name: admin.last_name || '',
+      email: admin.email || '', hospital_name: admin.hospital_name || 'Hospital', hospital_id: admin.id
     }));
-    
-    res.json({ 
-      success: true, 
-      admins: formattedAdmins 
-    });
-    
+    res.json({ success: true, admins: formattedAdmins });
   } catch (error) {
-    console.error("❌ Get hospital admins error:", error);
-    console.error("Error stack:", error.stack);
-    
-    // Return empty array to prevent frontend crash
-    res.status(200).json({ 
-      success: true, 
-      admins: []
-    });
+    res.status(200).json({ success: true, admins: [] });
   }
 };
-// SIMPLIFIED INBOX - MATCHES PHARMACY PATTERN
-export const getCardOfficeReportsInbox = async (req, res) => {
+
+export const getTriageReportsInbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
       where: { recipient_id: req.user.id, recipient_type: 'staff' },
       order: [['sent_at', 'DESC']]
     });
-    
     const unreadCount = reports.filter(r => !r.is_opened).length;
     res.json({ success: true, reports, unreadCount });
   } catch (error) {
-    console.error("Get card office reports inbox error:", error);
     res.status(500).json({ success: false, message: error.message, reports: [], unreadCount: 0 });
   }
 };
 
-// SIMPLIFIED OUTBOX - MATCHES PHARMACY PATTERN
-export const getCardOfficeReportsOutbox = async (req, res) => {
+export const getTriageReportsOutbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
       where: { sender_id: req.user.id, sender_type: 'staff' },
@@ -750,246 +352,128 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
     });
     res.json({ success: true, reports });
   } catch (error) {
-    console.error("Get card office reports outbox error:", error);
     res.status(500).json({ success: false, message: error.message, reports: [] });
   }
 };
 
-// SEND REPORT WITH MULTER (UPDATED)
-// backend/controllers/cardofficeController.js
-
-export const sendCardOfficeReport = async (req, res) => {
+export const sendTriageReport = async (req, res) => {
   try {
     const { title, body, priority, recipient_id } = req.body;
-
-    console.log('=== Sending Card Office Report ===');
-    console.log('Title:', title);
-    console.log('Recipient ID:', recipient_id);
-    console.log('Files received:', req.files?.length || 0);
-
     const sender = await HospitalStaff.findByPk(req.user.id);
-    if (!sender) {
-      return res.status(404).json({ success: false, message: "Sender not found" });
-    }
-
+    if (!sender) return res.status(404).json({ success: false, message: "Sender not found" });
     const recipient = await HospitalAdmin.findByPk(recipient_id);
-    if (!recipient) {
-      return res.status(404).json({ success: false, message: "Recipient not found" });
-    }
-
+    if (!recipient) return res.status(404).json({ success: false, message: "Recipient not found" });
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-    // ✅ FIXED: Handle file attachments correctly
     let attachments = [];
     if (req.files && req.files.length > 0) {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       attachments = req.files.map(file => ({
-        name: file.originalname,
-        url: `${baseUrl}/uploads/reports/${file.filename}`,
-        type: file.mimetype,
-        size: file.size,
-        uploaded_at: new Date()
+        name: file.originalname, url: `${baseUrl}/uploads/reports/${file.filename}`,
+        type: file.mimetype, size: file.size, uploaded_at: new Date()
       }));
-      console.log(`✅ ${attachments.length} attachment(s) processed`);
     }
-
     const report = await Report.create({
-      report_number,
-      title,
-      body,
-      priority: priority || 'medium',
-      status: 'sent',
-      attachments: attachments, // Store attachments as JSON
-      sender_id: sender.id,
-      sender_type: 'staff',
-      sender_first_name: sender.first_name,
-      sender_middle_name: sender.middle_name,
-      sender_last_name: sender.last_name,
-      sender_full_name: formatFullName(sender),
-      recipient_id: recipient.id,
-      recipient_type: 'hospital',
-      recipient_first_name: recipient.first_name,
-      recipient_middle_name: recipient.middle_name,
-      recipient_last_name: recipient.last_name,
-      recipient_full_name: formatFullName(recipient),
-      sent_at: new Date(),
-      last_activity_at: new Date()
+      report_number, title, body, priority: priority || 'medium', status: 'sent', attachments,
+      sender_id: sender.id, sender_type: 'staff', sender_first_name: sender.first_name,
+      sender_middle_name: sender.middle_name, sender_last_name: sender.last_name,
+      sender_full_name: formatFullName(sender), recipient_id: recipient.id, recipient_type: 'hospital',
+      recipient_first_name: recipient.first_name, recipient_middle_name: recipient.middle_name,
+      recipient_last_name: recipient.last_name, recipient_full_name: formatFullName(recipient),
+      sent_at: new Date(), last_activity_at: new Date()
     });
-
     const io = req.app.get('io');
     if (io) {
-      io.to(`hospital_${recipient.id}_admin`).emit('new_report_from_cardoffice', {
-        report_id: report.id,
-        title: report.title,
-        priority: report.priority,
-        sender_name: formatFullName(sender),
-        has_attachments: attachments.length > 0
+      io.to(`hospital_${recipient.id}_admin`).emit('new_report_from_triage', {
+        report_id: report.id, title: report.title, priority: report.priority, sender_name: formatFullName(sender)
       });
     }
-
-    res.status(201).json({ 
-      success: true, 
-      report, 
-      message: "Report sent successfully" 
-    });
+    res.status(201).json({ success: true, report, message: "Report sent successfully" });
   } catch (error) {
-    console.error("Send card office report error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
-export const replyToCardOfficeReport = async (req, res) => {
+
+export const replyToTriageReport = async (req, res) => {
   try {
     const { body } = req.body;
     const parentReport = await Report.findByPk(req.params.id);
-
-    if (!parentReport) {
-      return res.status(404).json({ success: false, message: "Report not found" });
-    }
-
+    if (!parentReport) return res.status(404).json({ success: false, message: "Report not found" });
     const sender = await HospitalStaff.findByPk(req.user.id);
-    if (!sender) {
-      return res.status(404).json({ success: false, message: "Sender not found" });
-    }
-
+    if (!sender) return res.status(404).json({ success: false, message: "Sender not found" });
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-    // ✅ FIXED: Handle file attachment for reply
     let attachments = [];
     if (req.file) {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       attachments = [{
-        name: req.file.originalname,
-        url: `${baseUrl}/uploads/reports/${req.file.filename}`,
-        type: req.file.mimetype,
-        size: req.file.size,
-        uploaded_at: new Date()
+        name: req.file.originalname, url: `${baseUrl}/uploads/reports/${req.file.filename}`,
+        type: req.file.mimetype, size: req.file.size, uploaded_at: new Date()
       }];
-      console.log(`✅ Reply attachment processed: ${req.file.originalname}`);
     }
-
     const reply = await Report.create({
-      report_number,
-      title: `Re: ${parentReport.title}`,
-      body,
-      priority: parentReport.priority,
-      status: 'sent',
-      attachments: attachments,
-      sender_id: sender.id,
-      sender_type: 'staff',
-      sender_first_name: sender.first_name,
-      sender_middle_name: sender.middle_name,
-      sender_last_name: sender.last_name,
-      sender_full_name: formatFullName(sender),
-      recipient_id: parentReport.sender_id,
-      recipient_type: parentReport.sender_type,
-      recipient_first_name: parentReport.sender_first_name,
-      recipient_middle_name: parentReport.sender_middle_name,
-      recipient_last_name: parentReport.sender_last_name,
-      recipient_full_name: parentReport.sender_full_name,
-      parent_report_id: parentReport.id,
-      sent_at: new Date(),
-      last_activity_at: new Date()
+      report_number, title: `Re: ${parentReport.title}`, body, priority: parentReport.priority,
+      status: 'sent', attachments, sender_id: sender.id, sender_type: 'staff',
+      sender_first_name: sender.first_name, sender_middle_name: sender.middle_name, sender_last_name: sender.last_name,
+      sender_full_name: formatFullName(sender), recipient_id: parentReport.sender_id, recipient_type: parentReport.sender_type,
+      recipient_first_name: parentReport.sender_first_name, recipient_middle_name: parentReport.sender_middle_name,
+      recipient_last_name: parentReport.sender_last_name, recipient_full_name: parentReport.sender_full_name,
+      parent_report_id: parentReport.id, sent_at: new Date(), last_activity_at: new Date()
     });
-
-    await parentReport.update({ 
-      status: 'replied', 
-      last_activity_at: new Date(),
-      reply_count: (parentReport.reply_count || 0) + 1
-    });
-
+    await parentReport.update({ status: 'replied', last_activity_at: new Date(), reply_count: (parentReport.reply_count || 0) + 1 });
     const io = req.app.get('io');
     if (io) {
-      io.to(`staff_${parentReport.sender_id}`).emit('report_reply_from_cardoffice', {
-        report_id: reply.id,
-        title: reply.title,
-        sender_name: formatFullName(sender),
-        has_attachments: attachments.length > 0
+      io.to(`staff_${parentReport.sender_id}`).emit('report_reply_from_triage', {
+        report_id: reply.id, title: reply.title, sender_name: formatFullName(sender)
       });
     }
-
     res.json({ success: true, reply, message: "Reply sent successfully" });
   } catch (error) {
-    console.error("Reply to card office report error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-export const markCardOfficeReportRead = async (req, res) => {
+export const markTriageReportRead = async (req, res) => {
   try {
     const report = await Report.findOne({
       where: { id: req.params.id, recipient_id: req.user.id, recipient_type: 'staff' }
     });
-
-    if (!report) {
-      return res.status(404).json({ success: false, message: "Report not found" });
-    }
-
-    await report.update({
-      is_opened: true,
-      opened_at: new Date(),
-      opened_count: (report.opened_count || 0) + 1
-    });
-
+    if (!report) return res.status(404).json({ success: false, message: "Report not found" });
+    await report.update({ is_opened: true, opened_at: new Date(), opened_count: (report.opened_count || 0) + 1 });
     res.json({ success: true, message: "Report marked as read" });
   } catch (error) {
-    console.error("Mark report read error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==================== SCHEDULE FUNCTIONS FOR CARD OFFICE ====================
-export const getMyScheduleCardOffice = async (req, res) => {
+// ==================== SCHEDULE FUNCTIONS ====================
+export const getMyScheduleTriage = async (req, res) => {
   try {
     const { days = 30 } = req.query;
-    const staffId = req.user.id;
-    
     const schedules = await Schedule.findAll({
-      where: {
-        staff_id: staffId,
-        date: { [Op.gte]: new Date() }
-      },
+      where: { staff_id: req.user.id, date: { [Op.gte]: new Date() } },
       order: [['date', 'ASC']],
       limit: parseInt(days)
     });
 
     let totalHours = 0;
-    
-    schedules.forEach(schedule => {
-      const shift = getShiftDisplayName(schedule.shift_type);
-      totalHours += shift.hours;
-    });
+    schedules.forEach(schedule => { totalHours += getShiftDisplayName(schedule.shift_type).hours; });
 
     const processedSchedules = schedules.map(schedule => {
       const shift = getShiftDisplayName(schedule.shift_type);
       return {
-        id: schedule.id,
-        date: schedule.date,
+        id: schedule.id, date: schedule.date,
         date_formatted: new Date(schedule.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        shift_type: schedule.shift_type,
-        shift_name: shift.name,
-        shift_icon: shift.icon,
-        start_time: shift.start,
-        end_time: shift.end,
-        hours: shift.hours,
-        ward: schedule.ward,
-        status: schedule.status
+        shift_type: schedule.shift_type, shift_name: shift.name, shift_icon: shift.icon,
+        start_time: shift.start, end_time: shift.end, hours: shift.hours, ward: schedule.ward, status: schedule.status
       };
     });
 
-    // Get today's schedules
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const todaySchedules = schedules.filter(s => {
-      const sDate = new Date(s.date);
-      return sDate >= today && sDate < tomorrow;
-    });
-    
+    const todaySchedules = schedules.filter(s => new Date(s.date) >= today && new Date(s.date) < tomorrow);
     const todayHours = todaySchedules.reduce((sum, s) => sum + getShiftDisplayName(s.shift_type).hours, 0);
 
-    // Get this week's schedules
     const startOfWeek = new Date(today);
     const day = startOfWeek.getDay();
     const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
@@ -998,11 +482,7 @@ export const getMyScheduleCardOffice = async (req, res) => {
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 6);
     endOfWeek.setHours(23, 59, 59, 999);
-    
-    const thisWeekSchedules = schedules.filter(s => {
-      const sDate = new Date(s.date);
-      return sDate >= startOfWeek && sDate <= endOfWeek;
-    });
+    const thisWeekSchedules = schedules.filter(s => new Date(s.date) >= startOfWeek && new Date(s.date) <= endOfWeek);
     const thisWeekHours = thisWeekSchedules.reduce((sum, s) => sum + getShiftDisplayName(s.shift_type).hours, 0);
 
     res.json({
@@ -1015,12 +495,6 @@ export const getMyScheduleCardOffice = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching card office schedule:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message,
-      schedules: [],
-      total_hours: 0
-    });
+    res.status(500).json({ success: false, message: error.message, schedules: [], total_hours: 0 });
   }
 };
