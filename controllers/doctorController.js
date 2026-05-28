@@ -636,7 +636,6 @@ export const getRadiologyResults = async (req, res) => {
     let results = [];
     
     try {
-      // Find all radiology requests for this patient
       const whereClause = { patient_id: patientId };
       
       if (hospital_id) {
@@ -657,18 +656,16 @@ export const getRadiologyResults = async (req, res) => {
       if (radiologyRequests.length > 0) {
         const requestIds = radiologyRequests.map(req => req.id);
         
-        // Find reports for these requests
+        // ✅ FIXED: Use radiology_request_id instead of request_id
         const radiologyReports = await RadiologyReport.findAll({
-          where: { request_id: { [Op.in]: requestIds } }
+          where: { radiology_request_id: { [Op.in]: requestIds } }
         });
         
         console.log(`📋 Found ${radiologyReports.length} radiology reports`);
         
-        // Map results - IMPORTANT: Always use a unique key
         results = radiologyRequests.map(req => {
-          const report = radiologyReports.find(r => r.request_id === req.id);
+          const report = radiologyReports.find(r => r.radiology_request_id === req.id);
           
-          // Parse images if they exist
           let images = [];
           if (report && report.images) {
             try {
@@ -678,10 +675,9 @@ export const getRadiologyResults = async (req, res) => {
             }
           }
           
-          // ✅ FIX: Always use request_id as the unique identifier
           return {
             id: report ? report.id : null,
-            unique_key: `rad_${req.id}`,  // Add this for React keys
+            unique_key: `rad_${req.id}`,
             request_id: req.id,
             request_number: req.request_number,
             patient_id: req.patient_id,
@@ -712,7 +708,6 @@ export const getRadiologyResults = async (req, res) => {
       console.error('Error fetching radiology results:', error);
     }
 
-    // Always return success with results array
     res.json({
       success: true,
       results: results || []
@@ -747,9 +742,9 @@ export const getRadiologyReportByRequestId = async (req, res) => {
       });
     }
     
-    const report = await RadiologyReport.findOne({
-      where: { request_id: requestId }
-    });
+  const report = await RadiologyReport.findOne({
+  where: { radiology_request_id: requestId }  // ✅ Use radiology_request_id
+});
     
     let images = [];
     if (report && report.images) {
