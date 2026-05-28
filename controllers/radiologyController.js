@@ -82,9 +82,16 @@ const generateRequestNumber = async () => {
 // @desc    Get pending radiology requests
 // @route   GET /api/radiology/pending
 // @access  Private
+// ==================== RADIOLOGY REQUEST ROUTES ====================
+
+// @desc    Get pending radiology requests
+// @route   GET /api/radiology/pending
+// @access  Private
 export const getPendingRequests = async (req, res) => {
   try {
     const { hospital_id, ward } = req.query;
+
+    console.log(`🔍 Fetching pending requests - hospital: ${hospital_id}, ward: ${ward}`);
 
     if (!hospital_id) {
       return res.status(400).json({ success: false, message: 'hospital_id is required' });
@@ -99,29 +106,26 @@ export const getPendingRequests = async (req, res) => {
       whereClause.ward = ward;
     }
 
+    // Simplified query - NO include
     const requests = await RadiologyRequest.findAll({
       where: whereClause,
-      include: [
-        {
-          model: Patient,
-          as: 'patient',
-          attributes: ['id', 'first_name', 'last_name', 'gender', 'age', 'phone', 'card_number'],
-          required: false
-        }
-      ],
-      order: [['createdAt', 'ASC']]
+      order: [['createdAt', 'ASC']],
+      raw: true
     });
+
+    console.log(`✅ Found ${requests.length} pending requests`);
 
     res.json({ success: true, requests, count: requests.length });
   } catch (error) {
-    console.error('Error fetching pending requests:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error fetching pending requests:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
-// @desc    Get in-progress radiology requests
-// @route   GET /api/radiology/in-progress
-// @access  Private
 // @desc    Get in-progress radiology requests
 // @route   GET /api/radiology/in-progress
 // @access  Private
@@ -129,7 +133,7 @@ export const getInProgressRequests = async (req, res) => {
   try {
     const { hospital_id, ward } = req.query;
 
-    console.log(`📊 Fetching in-progress requests for hospital: ${hospital_id}, ward: ${ward}`);
+    console.log(`🔍 Fetching in-progress requests - hospital: ${hospital_id}, ward: ${ward}`);
 
     if (!hospital_id) {
       return res.status(400).json({ success: false, message: 'hospital_id is required' });
@@ -146,22 +150,20 @@ export const getInProgressRequests = async (req, res) => {
 
     const requests = await RadiologyRequest.findAll({
       where: whereClause,
-      include: [
-        {
-          model: Patient,
-          as: 'patient',
-          attributes: ['id', 'first_name', 'last_name', 'gender', 'age', 'phone', 'card_number'],
-          required: false
-        }
-      ],
-      order: [['started_at', 'ASC']]
+      order: [['started_at', 'ASC']],
+      raw: true
     });
 
     console.log(`✅ Found ${requests.length} in-progress requests`);
+
     res.json({ success: true, requests, count: requests.length });
   } catch (error) {
-    console.error('Error fetching in-progress requests:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error fetching in-progress requests:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
@@ -171,6 +173,8 @@ export const getInProgressRequests = async (req, res) => {
 export const getCompletedRequests = async (req, res) => {
   try {
     const { hospital_id, ward } = req.query;
+
+    console.log(`🔍 Fetching completed requests - hospital: ${hospital_id}, ward: ${ward}`);
 
     if (!hospital_id) {
       return res.status(400).json({ success: false, message: 'hospital_id is required' });
@@ -187,28 +191,35 @@ export const getCompletedRequests = async (req, res) => {
 
     const requests = await RadiologyRequest.findAll({
       where: whereClause,
-      include: [
-        {
-          model: Patient,
-          as: 'patient',
-          attributes: ['id', 'first_name', 'last_name', 'gender', 'age', 'phone', 'card_number'],
-          required: false
-        },
-        {
-          model: RadiologyReport,
-          as: 'report',
-          required: false
-        }
-      ],
-      order: [['completed_at', 'DESC']]
+      order: [['completed_at', 'DESC']],
+      raw: true
     });
+
+    console.log(`✅ Found ${requests.length} completed requests`);
 
     res.json({ success: true, requests, count: requests.length });
   } catch (error) {
-    console.error('Error fetching completed requests:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error fetching completed requests:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
+
+// @desc    Get in-progress radiology requests
+// @route   GET /api/radiology/in-progress
+// @access  Private
+// @desc    Get in-progress radiology requests
+// @route   GET /api/radiology/in-progress
+// @access  Private
+
+
+// @desc    Get completed radiology requests
+// @route   GET /api/radiology/completed
+// @access  Private
+
 
 // @desc    Start radiology exam
 // @route   PUT /api/radiology/requests/:id/start
