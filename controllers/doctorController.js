@@ -1015,63 +1015,114 @@ export const requestLab = async (req, res) => {
 // @desc    Request radiology
 // @route   POST /api/doctor/request-radiology
 // @access  Private
+// @desc    Request radiology
+// @route   POST /api/doctor/request-radiology
+// @access  Private
+// ==================== REQUEST RADIOLOGY ====================
+
+// @desc    Request radiology
+// @route   POST /api/doctor/request-radiology
+// @access  Private
 export const requestRadiology = async (req, res) => {
   try {
     const { 
-      patient_id, patient_name, doctor_id, doctor_name,
-      ward, hospital_id, examType, bodyPart, priority, notes 
+      patient_id, 
+      patient_name, 
+      doctor_id, 
+      doctor_name,
+      ward, 
+      hospital_id, 
+      examType, 
+      bodyPart, 
+      priority, 
+      notes 
     } = req.body;
 
+    console.log('📡 Received radiology request:', {
+      patient_id,
+      doctor_id,
+      hospital_id,
+      examType,
+      bodyPart
+    });
+
+    // Validate required fields
     if (!patient_id || !doctor_id || !hospital_id || !examType || !bodyPart) {
-      return res.status(400).json({ success: false, message: 'Missing required fields' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required fields: patient_id, doctor_id, hospital_id, examType, and bodyPart are required' 
+      });
     }
 
-    const request_number = `RAD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    // Generate unique request number
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const dateStr = `${year}${month}${day}`;
+    const timestamp = Date.now();
+    const request_number = `RAD-${dateStr}-${timestamp}-${Math.floor(Math.random() * 1000)}`;
+    
+    console.log(`Generated request_number: ${request_number}`);
 
+    // Create the radiology request with requested_by field
     const radiologyRequest = await RadiologyRequest.create({
-      patient_id,
-      patient_name,
-      doctor_id,
-      doctor_name,
-      ward,
-      hospital_id,
       request_number,
+      patient_id: parseInt(patient_id),
+      patient_name: patient_name || `Patient ${patient_id}`,
+      doctor_id: parseInt(doctor_id),
+      doctor_name: doctor_name || req.user?.full_name || 'Doctor',
+      ward: ward || 'OPD',
+      hospital_id: parseInt(hospital_id),
       exam_type: examType,
       body_part: bodyPart,
       priority: priority || 'routine',
-      clinical_notes: notes,
+      clinical_notes: notes || null,
       status: 'pending',
-      requested_at: new Date()
+      requested_by: parseInt(doctor_id)  // ✅ ADD THIS LINE - stores who requested the radiology
     });
 
+    console.log(`✅ Radiology request created with ID: ${radiologyRequest.id}`);
+
+    // Emit socket event for radiology department
     const io = req.app.get('io');
     if (io) {
       io.to(`hospital_${hospital_id}_radiology`).emit('new_radiology_request', {
         request_id: radiologyRequest.id,
         request_number: radiologyRequest.request_number,
-        patient_id,
-        patient_name,
-        doctor_name,
+        patient_id: parseInt(patient_id),
+        patient_name: patient_name || `Patient ${patient_id}`,
+        doctor_name: doctor_name || 'Doctor',
         exam_type: examType,
         body_part: bodyPart,
         priority: priority || 'routine',
-        ward,
-        hospital_id
+        ward: ward || 'OPD',
+        hospital_id: parseInt(hospital_id)
       });
+      console.log(`📡 Emitted to hospital_${hospital_id}_radiology`);
     }
 
-    res.json({
+    res.status(201).json({
       success: true,
       message: 'Radiology request sent successfully',
       request: radiologyRequest
     });
 
   } catch (error) {
-    console.error('Error requesting radiology:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Radiology request error:', error);
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    if (error.errors) {
+      console.error('Validation errors:', error.errors.map(e => e.message));
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to create radiology request',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
-
 // ==================== DISCHARGE PATIENT ====================
 
 // @desc    Discharge patient
