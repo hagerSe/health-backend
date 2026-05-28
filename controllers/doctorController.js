@@ -1023,8 +1023,16 @@ export const requestLab = async (req, res) => {
 // @desc    Request radiology
 // @route   POST /api/doctor/request-radiology
 // @access  Private
+// ==================== REQUEST RADIOLOGY ====================
+
+// @desc    Request radiology
+// @route   POST /api/doctor/request-radiology
+// @access  Private
 export const requestRadiology = async (req, res) => {
   try {
+    console.log('📡 FULL REQUEST BODY:', JSON.stringify(req.body, null, 2));
+    console.log('📡 USER FROM AUTH:', { id: req.user.id, hospital_id: req.user.hospital_id, ward: req.user.ward });
+    
     const { 
       patient_id, 
       patient_name, 
@@ -1038,34 +1046,39 @@ export const requestRadiology = async (req, res) => {
       notes 
     } = req.body;
 
-    console.log('📡 Received radiology request:', {
-      patient_id,
-      doctor_id,
-      hospital_id,
-      examType,
-      bodyPart
-    });
-
-    // Validate required fields
-    if (!patient_id || !doctor_id || !hospital_id || !examType || !bodyPart) {
+    // Validate each field
+    const missingFields = [];
+    if (!patient_id) missingFields.push('patient_id');
+    if (!doctor_id) missingFields.push('doctor_id');
+    if (!hospital_id) missingFields.push('hospital_id');
+    if (!examType) missingFields.push('examType');
+    if (!bodyPart) missingFields.push('bodyPart');
+    
+    if (missingFields.length > 0) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Missing required fields: patient_id, doctor_id, hospital_id, examType, and bodyPart are required' 
+        message: `Missing fields: ${missingFields.join(', ')}`,
+        received: req.body
       });
     }
 
-    // Generate unique request number
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const dateStr = `${year}${month}${day}`;
-    const timestamp = Date.now();
-    const request_number = `RAD-${dateStr}-${timestamp}-${Math.floor(Math.random() * 1000)}`;
+    const request_number = `RAD-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     
-    console.log(`Generated request_number: ${request_number}`);
+    console.log('📝 Attempting to create with:', {
+      request_number,
+      patient_id: parseInt(patient_id),
+      patient_name: patient_name || `Patient ${patient_id}`,
+      doctor_id: parseInt(doctor_id),
+      doctor_name: doctor_name || req.user?.full_name || 'Doctor',
+      ward: ward || 'OPD',
+      hospital_id: parseInt(hospital_id),
+      exam_type: examType,
+      body_part: bodyPart,
+      priority: priority || 'routine',
+      clinical_notes: notes || null,
+      status: 'pending'
+    });
 
-    // Create the radiology request with requested_by field
     const radiologyRequest = await RadiologyRequest.create({
       request_number,
       patient_id: parseInt(patient_id),
@@ -1078,29 +1091,8 @@ export const requestRadiology = async (req, res) => {
       body_part: bodyPart,
       priority: priority || 'routine',
       clinical_notes: notes || null,
-      status: 'pending',
-      requested_by: parseInt(doctor_id)  // ✅ ADD THIS LINE - stores who requested the radiology
+      status: 'pending'
     });
-
-    console.log(`✅ Radiology request created with ID: ${radiologyRequest.id}`);
-
-    // Emit socket event for radiology department
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`hospital_${hospital_id}_radiology`).emit('new_radiology_request', {
-        request_id: radiologyRequest.id,
-        request_number: radiologyRequest.request_number,
-        patient_id: parseInt(patient_id),
-        patient_name: patient_name || `Patient ${patient_id}`,
-        doctor_name: doctor_name || 'Doctor',
-        exam_type: examType,
-        body_part: bodyPart,
-        priority: priority || 'routine',
-        ward: ward || 'OPD',
-        hospital_id: parseInt(hospital_id)
-      });
-      console.log(`📡 Emitted to hospital_${hospital_id}_radiology`);
-    }
 
     res.status(201).json({
       success: true,
@@ -1109,17 +1101,31 @@ export const requestRadiology = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Radiology request error:', error);
+    console.error('❌ FULL ERROR DETAILS:');
     console.error('Error name:', error.name);
     console.error('Error message:', error.message);
-    if (error.errors) {
-      console.error('Validation errors:', error.errors.map(e => e.message));
+    console.error('Error stack:', error.stack);
+    
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error',
+        errors: error.errors.map(e => ({ field: e.path, message: e.message }))
+      });
+    }
+    
+    if (error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Foreign key error: ${error.message}`,
+        fields: error.fields
+      });
     }
     
     res.status(500).json({ 
       success: false, 
-      message: error.message || 'Failed to create radiology request',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
