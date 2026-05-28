@@ -24,7 +24,7 @@ const router = express.Router();
 
 // Apply authentication and role restriction
 router.use(protect);
-router.use(restrictTo('triage'));
+router.use(restrictTo('triage', 'triage_nurse', 'nurse'));
 
 // ==================== TRIAGE QUEUE ROUTES ====================
 router.get('/queue', getTriageQueue);

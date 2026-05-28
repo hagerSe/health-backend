@@ -122,7 +122,7 @@ const calculateBMI = (weight, height) => {
 // ==================== TRIAGE QUEUE ====================
 export const getTriageQueue = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user?.hospital_id;
     if (!hospitalId) {
       return res.status(400).json({ success: false, message: 'Hospital ID is required', patients: [] });
     }
@@ -140,7 +140,7 @@ export const getTriageQueue = async (req, res) => {
 
 export const getTriagedPatients = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user?.hospital_id;
     if (!hospitalId) {
       return res.status(400).json({ success: false, message: 'Hospital ID is required', patients: [] });
     }
@@ -157,10 +157,9 @@ export const getTriagedPatients = async (req, res) => {
   }
 };
 
-// ==================== GET PATIENT BY ID FOR TRIAGE (ADDED - FIXES THE ERROR) ====================
 export const getPatientForTriage = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user?.hospital_id;
     
     if (!hospitalId) {
       return res.status(400).json({ 
@@ -200,7 +199,7 @@ export const getPatientForTriage = async (req, res) => {
 export const recordVitalsAndSendToWard = async (req, res) => {
   try {
     const { patientId, vitals, ward, notes } = req.body;
-    const hospitalId = req.user.hospital_id;
+    const hospitalId = req.user?.hospital_id;
     
     if (!patientId || !ward) {
       return res.status(400).json({ success: false, message: 'Patient ID and ward are required' });
@@ -214,10 +213,10 @@ export const recordVitalsAndSendToWard = async (req, res) => {
     const bmi = calculateBMI(vitals.weight, vitals.height);
 
     await patient.update({
-      vitals: { ...vitals, bmi, recorded_at: new Date(), recorded_by: formatFullName(req.user), recorded_by_id: req.user.id },
+      vitals: { ...vitals, bmi, recorded_at: new Date(), recorded_by: formatFullName(req.user), recorded_by_id: req.user?.id },
       triage_info: { 
         triaged_by: formatFullName(req.user), 
-        triaged_by_id: req.user.id, 
+        triaged_by_id: req.user?.id, 
         triaged_at: new Date(), 
         destination: ward, 
         ward, 
@@ -239,7 +238,7 @@ export const recordVitalsAndSendToWard = async (req, res) => {
         chief_complaint: vitals.chief_complaint || vitals.notes,
         triage_vitals: { ...vitals, bmi, priority }, 
         triage_nurse: formatFullName(req.user),
-        triage_nurse_id: req.user.id, 
+        triage_nurse_id: req.user?.id, 
         triaged_at: new Date()
       });
     } else {
@@ -254,7 +253,7 @@ export const recordVitalsAndSendToWard = async (req, res) => {
         chief_complaint: vitals.chief_complaint || vitals.notes,
         triage_vitals: { ...vitals, bmi, priority }, 
         triage_nurse: formatFullName(req.user),
-        triage_nurse_id: req.user.id, 
+        triage_nurse_id: req.user?.id, 
         triaged_at: new Date(), 
         started_at: new Date()
       });
@@ -262,7 +261,7 @@ export const recordVitalsAndSendToWard = async (req, res) => {
 
     await VitalSign.create({
       patient_id: patient.id, 
-      recorded_by_id: req.user.id, 
+      recorded_by_id: req.user?.id, 
       recorded_by_name: formatFullName(req.user),
       blood_pressure: vitals.blood_pressure || null, 
       temperature: vitals.temperature ? parseFloat(vitals.temperature) : null,
@@ -321,7 +320,7 @@ export const recordVitalsAndSendToWard = async (req, res) => {
 // ==================== GET TRIAGE DASHBOARD STATS ====================
 export const getTriageStats = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user?.hospital_id;
     if (!hospitalId) {
       return res.status(400).json({ success: false, message: 'Hospital ID is required', stats: { waiting: 0, opd: 0, eme: 0, anc: 0 } });
     }
@@ -343,7 +342,7 @@ export const getTriageStats = async (req, res) => {
 // ==================== STAFF PROFILE MANAGEMENT ====================
 export const getTriageProfile = async (req, res) => {
   try {
-    const staff = await HospitalStaff.findByPk(req.user.id, { attributes: { exclude: ['password'] } });
+    const staff = await HospitalStaff.findByPk(req.user?.id, { attributes: { exclude: ['password'] } });
     if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
     res.json({ success: true, staff: { ...staff.toJSON(), full_name: formatFullName(staff) } });
   } catch (error) {
@@ -355,7 +354,7 @@ export const getTriageProfile = async (req, res) => {
 export const updateTriageProfile = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, gender, age, phone } = req.body;
-    const staff = await HospitalStaff.findByPk(req.user.id);
+    const staff = await HospitalStaff.findByPk(req.user?.id);
     if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
     
     await staff.update({
@@ -367,7 +366,7 @@ export const updateTriageProfile = async (req, res) => {
       phone: phone !== undefined ? phone : staff.phone
     });
     
-    const updatedStaff = await HospitalStaff.findByPk(req.user.id, { attributes: { exclude: ['password'] } });
+    const updatedStaff = await HospitalStaff.findByPk(req.user?.id, { attributes: { exclude: ['password'] } });
     res.json({ success: true, staff: updatedStaff, message: "Profile updated successfully" });
   } catch (error) {
     console.error("Update profile error:", error);
@@ -378,7 +377,7 @@ export const updateTriageProfile = async (req, res) => {
 export const changeTriagePassword = async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
-    const staff = await HospitalStaff.findByPk(req.user.id);
+    const staff = await HospitalStaff.findByPk(req.user?.id);
     if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
     
     const isMatch = await bcrypt.compare(current_password, staff.password);
@@ -395,23 +394,21 @@ export const changeTriagePassword = async (req, res) => {
 };
 
 // ==================== REPORT MANAGEMENT ====================
-// ✅ CORRECT - No 'export' here
-const getHospitalAdminsForTriage = async (req, res) => {
+export const getHospitalAdminsForTriage = async (req, res) => {
   try {
-    const hospitalId = req.query.hospital_id || req.user.hospital_id;
+    const hospitalId = req.query.hospital_id || req.user?.hospital_id;
     if (!hospitalId) {
       return res.status(400).json({ success: false, message: 'Hospital ID is required', admins: [] });
     }
     
     const parsedHospitalId = parseInt(hospitalId);
     
-    const hospitalAdmin = await HospitalAdmin.findOne({
-      where: { id: parsedHospitalId },
-      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
+    const hospitalAdmins = await HospitalAdmin.findAll({
+      where: { hospital_id: parsedHospitalId },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name', 'hospital_id']
     });
     
-    const admins = hospitalAdmin ? [hospitalAdmin] : [];
-    const formattedAdmins = admins.map(admin => ({
+    const formattedAdmins = (hospitalAdmins || []).map(admin => ({
       id: admin.id, 
       full_name: formatFullName(admin), 
       first_name: admin.first_name || '',
@@ -419,20 +416,20 @@ const getHospitalAdminsForTriage = async (req, res) => {
       last_name: admin.last_name || '',
       email: admin.email || '', 
       hospital_name: admin.hospital_name || 'Hospital', 
-      hospital_id: admin.id
+      hospital_id: admin.hospital_id
     }));
     
     res.json({ success: true, admins: formattedAdmins });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    res.status(200).json({ success: true, admins: [] });
+    res.status(500).json({ success: false, message: error.message, admins: [] });
   }
 };
 
 export const getTriageReportsInbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
-      where: { recipient_id: req.user.id, recipient_type: 'staff' },
+      where: { recipient_id: req.user?.id, recipient_type: 'staff' },
       order: [['sent_at', 'DESC']]
     });
     const unreadCount = reports.filter(r => !r.is_opened).length;
@@ -446,7 +443,7 @@ export const getTriageReportsInbox = async (req, res) => {
 export const getTriageReportsOutbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
-      where: { sender_id: req.user.id, sender_type: 'staff' },
+      where: { sender_id: req.user?.id, sender_type: 'staff' },
       order: [['sent_at', 'DESC']]
     });
     res.json({ success: true, reports });
@@ -459,7 +456,7 @@ export const getTriageReportsOutbox = async (req, res) => {
 export const sendTriageReport = async (req, res) => {
   try {
     const { title, body, priority, recipient_id } = req.body;
-    const sender = await HospitalStaff.findByPk(req.user.id);
+    const sender = await HospitalStaff.findByPk(req.user?.id);
     if (!sender) return res.status(404).json({ success: false, message: "Sender not found" });
 
     const recipient = await HospitalAdmin.findByPk(recipient_id);
@@ -525,7 +522,7 @@ export const replyToTriageReport = async (req, res) => {
     const parentReport = await Report.findByPk(req.params.id);
     if (!parentReport) return res.status(404).json({ success: false, message: "Report not found" });
 
-    const sender = await HospitalStaff.findByPk(req.user.id);
+    const sender = await HospitalStaff.findByPk(req.user?.id);
     if (!sender) return res.status(404).json({ success: false, message: "Sender not found" });
 
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -588,13 +585,31 @@ export const replyToTriageReport = async (req, res) => {
   }
 };
 
+export const markTriageReportRead = async (req, res) => {
+  try {
+    const report = await Report.findOne({
+      where: { id: req.params.id, recipient_id: req.user?.id, recipient_type: 'staff' }
+    });
+    if (!report) return res.status(404).json({ success: false, message: "Report not found" });
+    
+    await report.update({ 
+      is_opened: true, 
+      opened_at: new Date(), 
+      opened_count: (report.opened_count || 0) + 1 
+    });
+    res.json({ success: true, message: "Report marked as read" });
+  } catch (error) {
+    console.error("Mark report read error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 // ==================== SCHEDULE FUNCTIONS ====================
-const getMyScheduleTriage = async (req, res) => {
+export const getMyScheduleTriage = async (req, res) => {
   try {
     const { days = 30 } = req.query;
     const schedules = await Schedule.findAll({
-      where: { staff_id: req.user.id, date: { [Op.gte]: new Date() } },
+      where: { staff_id: req.user?.id, date: { [Op.gte]: new Date() } },
       order: [['date', 'ASC']],
       limit: parseInt(days)
     });
@@ -664,4 +679,21 @@ const getMyScheduleTriage = async (req, res) => {
   }
 };
 
-// ==================== EXPORTS ====================
+// ==================== EXPORT ALL ====================
+export {
+  getTriageQueue,
+  getTriagedPatients,
+  getPatientForTriage,
+  recordVitalsAndSendToWard,
+  getTriageStats,
+  getTriageProfile,
+  updateTriageProfile,
+  changeTriagePassword,
+  getTriageReportsInbox,
+  getTriageReportsOutbox,
+  sendTriageReport,
+  replyToTriageReport,
+  markTriageReportRead,
+  getHospitalAdminsForTriage,
+  getMyScheduleTriage
+};
