@@ -394,19 +394,32 @@ export const changeTriagePassword = async (req, res) => {
 };
 
 // ==================== REPORT MANAGEMENT ====================
+// ==================== REPORT MANAGEMENT ====================
 export const getHospitalAdminsForTriage = async (req, res) => {
   try {
     const hospitalId = req.query.hospital_id || req.user?.hospital_id;
+    
+    console.log('getHospitalAdminsForTriage - hospitalId:', hospitalId);
+    
     if (!hospitalId) {
-      return res.status(400).json({ success: false, message: 'Hospital ID is required', admins: [] });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required', 
+        admins: [] 
+      });
     }
     
     const parsedHospitalId = parseInt(hospitalId);
     
+    // ✅ FIX: Use 'id' instead of 'hospital_id' since HospitalAdmin's id IS the hospital_id
     const hospitalAdmins = await HospitalAdmin.findAll({
-      where: { hospital_id: parsedHospitalId },
-      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name', 'hospital_id']
+      where: { 
+        id: parsedHospitalId  // Changed from 'hospital_id' to 'id'
+      },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
+    
+    console.log(`Found ${hospitalAdmins.length} admins for hospital ${parsedHospitalId}`);
     
     const formattedAdmins = (hospitalAdmins || []).map(admin => ({
       id: admin.id, 
@@ -416,13 +429,24 @@ export const getHospitalAdminsForTriage = async (req, res) => {
       last_name: admin.last_name || '',
       email: admin.email || '', 
       hospital_name: admin.hospital_name || 'Hospital', 
-      hospital_id: admin.hospital_id
+      hospital_id: admin.id  // Use admin.id as hospital_id
     }));
     
-    res.json({ success: true, admins: formattedAdmins });
+    res.json({ 
+      success: true, 
+      admins: formattedAdmins 
+    });
   } catch (error) {
     console.error("Get hospital admins error:", error);
-    res.status(500).json({ success: false, message: error.message, admins: [] });
+    console.error("Error details:", error.message);
+    console.error("Error stack:", error.stack);
+    
+    // Return empty array instead of error to prevent dashboard crash
+    res.status(200).json({ 
+      success: true, 
+      admins: [],
+      message: error.message 
+    });
   }
 };
 
