@@ -1799,6 +1799,9 @@ export const markHRReportRead = async (req, res) => {
 
 // @desc    Get hospital admins for HR
 // @route   GET /api/hr/hospital-admins
+// @desc    Get hospital admins for HR
+// @route   GET /api/hr/hospital-admins
+// @access  Private
 export const getHospitalAdminsForHR = async (req, res) => {
   try {
     // Get the current logged-in staff member
@@ -1811,28 +1814,16 @@ export const getHospitalAdminsForHR = async (req, res) => {
     
     const hospitalId = staffMember.hospital_id;
     
-    console.log(`🔍 Looking for hospital admins for hospital_id: ${hospitalId}`);
+    console.log(`🔍 HR: Looking for hospital admins for hospital_id: ${hospitalId}`);
     
-    // Query HospitalAdmin table - Make sure the column name matches
-    // If your HospitalAdmin model uses 'hospital_id' as foreign key
+    // ✅ FIX: The HospitalAdmin table uses 'id' as the hospital identifier
+    // Since hospital_id in staff refers to the HospitalAdmin's id
     const hospitalAdmins = await HospitalAdmin.findAll({
-     where: { id: req.user.hospital_id },  
+      where: { id: hospitalId },  // ✅ Use 'id' not 'hospital_id'
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
     
-    console.log(`✅ Found ${hospitalAdmins.length} hospital admins in HospitalAdmin table`);
-    
-    // If no admins found, try alternative column name
-    if (hospitalAdmins.length === 0) {
-      console.log('⚠️ No admins found with hospital_id, trying id...');
-      const altAdmins = await HospitalAdmin.findAll({
-        where: { id: hospitalId },
-        attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
-      });
-      if (altAdmins.length > 0) {
-        hospitalAdmins.push(...altAdmins);
-      }
-    }
+    console.log(`✅ HR: Found ${hospitalAdmins.length} hospital admins`);
     
     const formatFullName = (admin) => {
       const firstName = admin.first_name || '';
@@ -1849,15 +1840,9 @@ export const getHospitalAdminsForHR = async (req, res) => {
       hospital_id: hospitalId
     }));
     
-    // If STILL no admins found, create a test admin or return empty
-    if (formattedAdmins.length === 0) {
-      console.warn('⚠️ No hospital admins found in database!');
-      // Optionally: Create a default admin or return empty
-    }
-    
     res.json({ success: true, admins: formattedAdmins });
   } catch (error) {
-    console.error("Get hospital admins error:", error);
+    console.error("HR get hospital admins error:", error);
     res.json({ success: true, admins: [], message: error.message });
   }
 };
