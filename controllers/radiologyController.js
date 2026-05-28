@@ -112,7 +112,8 @@ export const getPendingRequests = async (req, res) => {
         }
       ],
       order: [
-        [sequelize.literal(`CASE priority WHEN 'stat' THEN 1 WHEN 'urgent' THEN 2 WHEN 'routine' THEN 3 END`), 'ASC'],
+        // ✅ FIXED: Use simpler ordering without CASE
+        ['priority', 'ASC'],  // This assumes priority has values like 'stat', 'urgent', 'routine'
         ['createdAt', 'ASC']
       ]
     });
@@ -289,7 +290,7 @@ export const getCompletedRequests = async (req, res) => {
         requested_at: data.createdAt,
         started_at: data.started_at,
         completed_at: data.completed_at,
-        reported_by: data.started_by || null,
+        reported_by: data.report?.reported_by || data.started_by || null,
         findings: data.report?.findings || null,
         impression: data.report?.impression || null,
         critical: data.report?.critical || false,
@@ -303,7 +304,6 @@ export const getCompletedRequests = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // @desc    Start radiology exam
 // @route   PUT /api/radiology/requests/:id/start
 // @access  Private
