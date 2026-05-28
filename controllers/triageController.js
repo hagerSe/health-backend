@@ -680,20 +680,3 @@ export const getMyScheduleTriage = async (req, res) => {
 };
 
 // ==================== EXPORT ALL ====================
-export {
-  getTriageQueue,
-  getTriagedPatients,
-  getPatientForTriage,
-  recordVitalsAndSendToWard,
-  getTriageStats,
-  getTriageProfile,
-  updateTriageProfile,
-  changeTriagePassword,
-  getTriageReportsInbox,
-  getTriageReportsOutbox,
-  sendTriageReport,
-  replyToTriageReport,
-  markTriageReportRead,
-  getHospitalAdminsForTriage,
-  getMyScheduleTriage
-};
