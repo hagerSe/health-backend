@@ -1,4 +1,4 @@
-// controllers/radiologyController.js - FIXED for your actual model
+// controllers/radiologyController.js - COMPLETELY FIXED
 import RadiologyRequest from '../models/RadiologyRequest.js';
 import RadiologyReport from '../models/RadiologyReport.js';
 import Patient from '../models/Patient.js';
@@ -19,8 +19,6 @@ if (!fs.existsSync(radiologyDir)) {
   fs.mkdirSync(radiologyDir, { recursive: true });
 }
 
-// In radiologyController.js - Update the multer configuration
-
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = 'uploads/radiology';
@@ -39,17 +37,12 @@ const storage = multer.diskStorage({
 export const upload = multer({ 
   storage,
   limits: { 
-    fileSize: 50 * 1024 * 1024  // 50MB limit for medical images
+    fileSize: 50 * 1024 * 1024
   },
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
-      'image/jpeg', 
-      'image/jpg', 
-      'image/png', 
-      'image/gif', 
-      'image/dicom',
-      'application/dicom',
-      'image/dicom-rle'
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+      'image/dicom', 'application/dicom', 'image/dicom-rle'
     ];
     if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(dcm|dicom)$/i)) {
       cb(null, true);
@@ -58,6 +51,7 @@ export const upload = multer({
     }
   }
 });
+
 // ==================== HELPER FUNCTIONS ====================
 const generateRequestNumber = async () => {
   const date = new Date();
@@ -66,11 +60,15 @@ const generateRequestNumber = async () => {
   const day = String(date.getDate()).padStart(2, '0');
   const dateStr = `${year}${month}${day}`;
   
+  const startOfDay = new Date(date);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(date);
+  endOfDay.setHours(23, 59, 59, 999);
+  
   const todayCount = await RadiologyRequest.count({
     where: {
       createdAt: {
-        [Op.gte]: new Date(date.setHours(0, 0, 0, 0)),
-        [Op.lte]: new Date(date.setHours(23, 59, 59, 999))
+        [Op.between]: [startOfDay, endOfDay]
       }
     }
   });
@@ -111,45 +109,10 @@ export const getPendingRequests = async (req, res) => {
           required: false
         }
       ],
-      order: [
-        // ✅ FIXED: Use simpler ordering without CASE
-        ['priority', 'ASC'],  // This assumes priority has values like 'stat', 'urgent', 'routine'
-        ['createdAt', 'ASC']
-      ]
+      order: [['createdAt', 'ASC']]
     });
 
-    const formattedRequests = requests.map(req => {
-      const data = req.toJSON();
-      return {
-        id: data.id,
-        request_number: data.request_number,
-        patient_id: data.patient_id,
-        patient_name: data.patient_name,
-        patient: data.patient ? {
-          id: data.patient.id,
-          first_name: data.patient.first_name,
-          last_name: data.patient.last_name,
-          full_name: `${data.patient.first_name} ${data.patient.last_name}`,
-          gender: data.patient.gender,
-          age: data.patient.age,
-          phone: data.patient.phone,
-          card_number: data.patient.card_number
-        } : null,
-        doctor_id: data.doctor_id,
-        doctor_name: data.doctor_name,
-        exam_type: data.exam_type,
-        body_part: data.body_part,
-        clinical_notes: data.clinical_notes,
-        priority: data.priority,
-        status: data.status,
-        ward: data.ward,
-        requested_at: data.createdAt,
-        started_at: data.started_at,
-        completed_at: data.completed_at
-      };
-    });
-
-    res.json({ success: true, requests: formattedRequests, count: formattedRequests.length });
+    res.json({ success: true, requests, count: requests.length });
   } catch (error) {
     console.error('Error fetching pending requests:', error);
     res.status(500).json({ success: false, message: error.message });
@@ -159,9 +122,14 @@ export const getPendingRequests = async (req, res) => {
 // @desc    Get in-progress radiology requests
 // @route   GET /api/radiology/in-progress
 // @access  Private
+// @desc    Get in-progress radiology requests
+// @route   GET /api/radiology/in-progress
+// @access  Private
 export const getInProgressRequests = async (req, res) => {
   try {
     const { hospital_id, ward } = req.query;
+
+    console.log(`📊 Fetching in-progress requests for hospital: ${hospital_id}, ward: ${ward}`);
 
     if (!hospital_id) {
       return res.status(400).json({ success: false, message: 'hospital_id is required' });
@@ -189,36 +157,8 @@ export const getInProgressRequests = async (req, res) => {
       order: [['started_at', 'ASC']]
     });
 
-    const formattedRequests = requests.map(req => {
-      const data = req.toJSON();
-      return {
-        id: data.id,
-        request_number: data.request_number,
-        patient_id: data.patient_id,
-        patient_name: data.patient_name,
-        patient: data.patient ? {
-          id: data.patient.id,
-          first_name: data.patient.first_name,
-          last_name: data.patient.last_name,
-          full_name: `${data.patient.first_name} ${data.patient.last_name}`,
-          gender: data.patient.gender,
-          age: data.patient.age,
-          phone: data.patient.phone,
-          card_number: data.patient.card_number
-        } : null,
-        doctor_id: data.doctor_id,
-        doctor_name: data.doctor_name,
-        exam_type: data.exam_type,
-        body_part: data.body_part,
-        priority: data.priority,
-        status: data.status,
-        ward: data.ward,
-        requested_at: data.createdAt,
-        started_at: data.started_at
-      };
-    });
-
-    res.json({ success: true, requests: formattedRequests, count: formattedRequests.length });
+    console.log(`✅ Found ${requests.length} in-progress requests`);
+    res.json({ success: true, requests, count: requests.length });
   } catch (error) {
     console.error('Error fetching in-progress requests:', error);
     res.status(500).json({ success: false, message: error.message });
@@ -263,54 +203,19 @@ export const getCompletedRequests = async (req, res) => {
       order: [['completed_at', 'DESC']]
     });
 
-    const formattedRequests = requests.map(req => {
-      const data = req.toJSON();
-      return {
-        id: data.id,
-        request_number: data.request_number,
-        patient_id: data.patient_id,
-        patient_name: data.patient_name,
-        patient: data.patient ? {
-          id: data.patient.id,
-          first_name: data.patient.first_name,
-          last_name: data.patient.last_name,
-          full_name: `${data.patient.first_name} ${data.patient.last_name}`,
-          gender: data.patient.gender,
-          age: data.patient.age,
-          phone: data.patient.phone,
-          card_number: data.patient.card_number
-        } : null,
-        doctor_id: data.doctor_id,
-        doctor_name: data.doctor_name,
-        exam_type: data.exam_type,
-        body_part: data.body_part,
-        priority: data.priority,
-        status: data.status,
-        ward: data.ward,
-        requested_at: data.createdAt,
-        started_at: data.started_at,
-        completed_at: data.completed_at,
-        reported_by: data.report?.reported_by || data.started_by || null,
-        findings: data.report?.findings || null,
-        impression: data.report?.impression || null,
-        critical: data.report?.critical || false,
-        images: data.report?.images || []
-      };
-    });
-
-    res.json({ success: true, requests: formattedRequests, count: formattedRequests.length });
+    res.json({ success: true, requests, count: requests.length });
   } catch (error) {
     console.error('Error fetching completed requests:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 // @desc    Start radiology exam
 // @route   PUT /api/radiology/requests/:id/start
 // @access  Private
 export const startExam = async (req, res) => {
   try {
     const { id } = req.params;
-    const staffId = req.user.id;
     const staffName = req.user.full_name || `${req.user.first_name} ${req.user.last_name}`;
 
     const request = await RadiologyRequest.findByPk(id);
@@ -374,8 +279,6 @@ export const uploadImages = async (req, res) => {
       }
     }
 
-    // Store images in a temporary location or create a radiology_images table
-    // For now, we'll store them in the request's metadata
     res.json({ 
       success: true, 
       message: `${newImages.length} image(s) uploaded successfully`,
@@ -390,40 +293,26 @@ export const uploadImages = async (req, res) => {
 // @desc    Submit radiology report
 // @route   PUT /api/radiology/report/:id
 // @access  Private
-// In radiologyController.js - Replace the submitReport function
-// backend/controllers/radiologyController.js
-// REPLACE the entire submitReport function with this:
-// backend/controllers/radiologyController.js
-// REPLACE the submitReport function with this:
-
-// In radiologyController.js - Update the submitReport function
-
+// @desc    Submit radiology report
+// @route   PUT /api/radiology/report/:id
+// @access  Private
 export const submitReport = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { id } = req.params;
-    const { 
-      findings, 
-      impression, 
-      recommendations,
-      clinical_history,
-      critical
-    } = req.body;
+    const { findings, impression, recommendations, clinical_history, critical } = req.body;
 
     console.log(`📝 Submitting radiology report for request: ${id}`);
+    console.log(`📎 Files received: ${req.files?.length || 0}`);
 
     const staffId = req.user.id;
     const staffName = req.user.full_name || `${req.user.first_name} ${req.user.last_name}`.trim();
 
-    // Find the request
     const request = await RadiologyRequest.findByPk(id, { transaction });
 
     if (!request) {
       await transaction.rollback();
-      return res.status(404).json({ 
-        success: false, 
-        message: `Radiology request with ID ${id} not found` 
-      });
+      return res.status(404).json({ success: false, message: `Radiology request with ID ${id} not found` });
     }
 
     if (request.status !== 'in_progress') {
@@ -449,6 +338,7 @@ export const submitReport = async (req, res) => {
           uploaded_by: staffName
         });
       }
+      console.log(`✅ Processed ${processedImages.length} images`);
     }
 
     // Check if report already exists
@@ -458,7 +348,6 @@ export const submitReport = async (req, res) => {
     });
 
     if (radiologyReport) {
-      // Update existing report
       await radiologyReport.update({
         findings: findings || radiologyReport.findings,
         impression: impression || radiologyReport.impression,
@@ -475,7 +364,6 @@ export const submitReport = async (req, res) => {
       }, { transaction });
       console.log(`✅ Updated existing radiology report for request ${id}`);
     } else {
-      // Create new report
       radiologyReport = await RadiologyReport.create({
         request_id: request.id,
         patient_id: request.patient_id,
@@ -501,7 +389,6 @@ export const submitReport = async (req, res) => {
       console.log(`✅ Created new radiology report for request ${id}, report_id: ${radiologyReport.id}`);
     }
 
-    // Update the request
     await request.update({
       status: 'completed',
       completed_at: new Date(),
@@ -595,9 +482,6 @@ export const getReport = async (req, res) => {
 
 // ==================== PROFILE ROUTES ====================
 
-// @desc    Get radiology staff profile
-// @route   GET /api/radiology/profile
-// @access  Private
 export const getRadiologyProfile = async (req, res) => {
   try {
     const staff = await HospitalStaff.findByPk(req.user.id, {
@@ -621,9 +505,6 @@ export const getRadiologyProfile = async (req, res) => {
   }
 };
 
-// @desc    Update radiology staff profile
-// @route   PUT /api/radiology/profile
-// @access  Private
 export const updateRadiologyProfile = async (req, res) => {
   try {
     const { first_name, middle_name, last_name, gender, age, phone } = req.body;
@@ -654,9 +535,6 @@ export const updateRadiologyProfile = async (req, res) => {
   }
 };
 
-// @desc    Change radiology staff password
-// @route   PUT /api/radiology/change-password
-// @access  Private
 export const changeRadiologyPassword = async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
@@ -685,9 +563,6 @@ export const changeRadiologyPassword = async (req, res) => {
 
 // ==================== REPORT ROUTES ====================
 
-// @desc    Get hospital admins for radiology
-// @route   GET /api/radiology/hospital-admins
-// @access  Private
 export const getHospitalAdminsForRadiology = async (req, res) => {
   try {
     const hospitalAdmins = await HospitalAdmin.findAll({
@@ -710,9 +585,6 @@ export const getHospitalAdminsForRadiology = async (req, res) => {
   }
 };
 
-// @desc    Get radiology reports inbox
-// @route   GET /api/radiology/reports/inbox
-// @access  Private
 export const getRadiologyReportsInbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
@@ -728,9 +600,6 @@ export const getRadiologyReportsInbox = async (req, res) => {
   }
 };
 
-// @desc    Get radiology reports outbox
-// @route   GET /api/radiology/reports/outbox
-// @access  Private
 export const getRadiologyReportsOutbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
@@ -744,9 +613,6 @@ export const getRadiologyReportsOutbox = async (req, res) => {
   }
 };
 
-// @desc    Send radiology report
-// @route   POST /api/radiology/reports/send
-// @access  Private
 export const sendRadiologyReport = async (req, res) => {
   try {
     const { title, body, priority, recipient_id } = req.body;
@@ -800,9 +666,6 @@ export const sendRadiologyReport = async (req, res) => {
   }
 };
 
-// @desc    Reply to radiology report
-// @route   POST /api/radiology/reports/:id/reply
-// @access  Private
 export const replyToRadiologyReport = async (req, res) => {
   try {
     const { body } = req.body;
@@ -858,9 +721,6 @@ export const replyToRadiologyReport = async (req, res) => {
   }
 };
 
-// @desc    Mark radiology report as read
-// @route   PUT /api/radiology/reports/:id/read
-// @access  Private
 export const markRadiologyReportRead = async (req, res) => {
   try {
     const report = await Report.findOne({

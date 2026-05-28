@@ -227,7 +227,7 @@ HospitalAdmin.hasMany(LabRequest, {
   onDelete: "RESTRICT"
 });
 
-// Radiology Relationships
+// // ==================== RADIOLOGY RELATIONSHIPS (FIXED) ====================
 Patient.hasMany(RadiologyRequest, {
   foreignKey: "patient_id",
   as: "radiology_requests",
@@ -240,30 +240,57 @@ RadiologyRequest.belongsTo(Patient, {
   onDelete: "CASCADE"
 });
 
+// Request to Report (one-to-one)
 RadiologyRequest.hasOne(RadiologyReport, {
-  foreignKey: "radiology_request_id",
+  foreignKey: "request_id",  // ✅ Fixed: matches RadiologyReport model
   as: "report",
   onDelete: "CASCADE"
 });
 
 RadiologyReport.belongsTo(RadiologyRequest, {
-  foreignKey: "radiology_request_id",
+  foreignKey: "request_id",  // ✅ Fixed: matches RadiologyReport model
   as: "radiology_request",
   onDelete: "CASCADE"
 });
 
+// Doctor (HospitalStaff) who requested
 RadiologyRequest.belongsTo(HospitalStaff, {
-  foreignKey: "requested_by",
-  as: "requester_staff",
+  foreignKey: "doctor_id",
+  as: "requesting_doctor",
   constraints: false
 });
 
 HospitalStaff.hasMany(RadiologyRequest, {
-  foreignKey: "requested_by",
-  as: "requested_radiology",
+  foreignKey: "doctor_id",
+  as: "doctor_radiology_requests",
   constraints: false
 });
 
+// Radiologist (HospitalStaff) who reported
+RadiologyReport.belongsTo(HospitalStaff, {
+  foreignKey: "radiologist_id",
+  as: "radiologist",
+  constraints: false
+});
+
+HospitalStaff.hasMany(RadiologyReport, {
+  foreignKey: "radiologist_id",
+  as: "radiologist_reports",
+  constraints: false
+});
+
+// Hospital relationship
+RadiologyRequest.belongsTo(HospitalAdmin, {
+  foreignKey: "hospital_id",
+  as: "hospital",
+  onDelete: "RESTRICT"
+});
+
+HospitalAdmin.hasMany(RadiologyRequest, {
+  foreignKey: "hospital_id",
+  as: "hospital_radiology_requests",
+  onDelete: "RESTRICT"
+});
 // Midwife Relationships
 HospitalStaff.hasMany(Patient, {
   foreignKey: "midwife_id",
