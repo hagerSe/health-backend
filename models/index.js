@@ -227,7 +227,7 @@ HospitalAdmin.hasMany(LabRequest, {
   onDelete: "RESTRICT"
 });
 
-// // ==================== RADIOLOGY RELATIONSHIPS (FIXED) ====================
+// ==================== RADIOLOGY RELATIONSHIPS (FIXED) ====================
 Patient.hasMany(RadiologyRequest, {
   foreignKey: "patient_id",
   as: "radiology_requests",
@@ -242,13 +242,13 @@ RadiologyRequest.belongsTo(Patient, {
 
 // Request to Report (one-to-one)
 RadiologyRequest.hasOne(RadiologyReport, {
-  foreignKey: "request_id",  // ✅ Fixed: matches RadiologyReport model
+  foreignKey: "request_id",
   as: "report",
   onDelete: "CASCADE"
 });
 
 RadiologyReport.belongsTo(RadiologyRequest, {
-  foreignKey: "request_id",  // ✅ Fixed: matches RadiologyReport model
+  foreignKey: "request_id",
   as: "radiology_request",
   onDelete: "CASCADE"
 });
@@ -291,6 +291,7 @@ HospitalAdmin.hasMany(RadiologyRequest, {
   as: "hospital_radiology_requests",
   onDelete: "RESTRICT"
 });
+
 // Midwife Relationships
 HospitalStaff.hasMany(Patient, {
   foreignKey: "midwife_id",
@@ -332,19 +333,6 @@ HospitalStaff.hasMany(LabResult, {
 LabResult.belongsTo(HospitalStaff, {
   foreignKey: "processed_by",
   as: "processing_technician",
-  constraints: false
-});
-
-// Radiologist Relationships
-HospitalStaff.hasMany(RadiologyReport, {
-  foreignKey: "reported_by_id",
-  as: "radiologist_reports",
-  constraints: false
-});
-
-RadiologyReport.belongsTo(HospitalStaff, {
-  foreignKey: "reported_by_id",
-  as: "reporting_radiologist",
   constraints: false
 });
 
@@ -701,12 +689,6 @@ if (Prescription.associate) {
   });
 }
 
-// You can add similar calls for other models if they have associate methods
-// For example, if Patient has an associate method:
-// if (Patient.associate) {
-//   Patient.associate({ HospitalAdmin, VitalSign, Prescription, Admission, Referral, AntenatalVisit, DeliveryRecord });
-// }
-
 // ============================================
 // EXPORT ALL MODELS
 // ============================================
@@ -767,4 +749,4 @@ export default {
   VitalSign,
   Report,
   Notification
-};   
+};
