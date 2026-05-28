@@ -449,6 +449,7 @@ const token = jwt.sign(
 console.log("✅ JWT token generated");
 
 // Prepare user data for response
+// Prepare user data for response
 const userData = {
   id: user.id,
   first_name: user.first_name,
@@ -460,12 +461,27 @@ const userData = {
   userType: userType,
   status: user.status || 'active',
   is_verified: user.is_verified,
-  hospital_id: user.hospital_id,      // ✅ Add this
-  hospitalId: user.hospital_id,       // ✅ Add this for compatibility
-  department: user.department,        // ✅ Add this
-  hospital_name: user.hospital_name   // ✅ Add this if available
+  hospital_id: user.hospital_id,
+  hospitalId: user.hospital_id,
+  department: user.department,
+  hospital_name: user.hospital_name,
+  ward: user.ward || null  // ← ADD THIS LINE - CRITICAL!
 };
 
+// Add optional fields if they exist
+if (user.region_name) userData.region_name = user.region_name;
+if (user.zone_name) userData.zone_name = user.zone_name;
+if (user.woreda_name) userData.woreda_name = user.woreda_name;
+if (user.kebele_name) userData.kebele_name = user.kebele_name;
+
+// Debug log to verify ward is being sent
+console.log("✅ User data being sent:", {
+  id: userData.id,
+  email: userData.email,
+  hospital_id: userData.hospital_id,
+  ward: userData.ward,
+  department: userData.department
+});
 // Add optional fields if they exist
 if (user.region_name) userData.region_name = user.region_name;
 if (user.zone_name) userData.zone_name = user.zone_name;
@@ -989,26 +1005,30 @@ export const getProfile = async (req, res) => {
     }
     
     // ✅ FORMAT the user data properly (same as login function)
-    const formattedUser = {
-      id: user.id,
-      first_name: user.first_name,
-      middle_name: user.middle_name || '',
-      last_name: user.last_name,
-      full_name: `${user.first_name} ${user.middle_name ? user.middle_name + ' ' : ''}${user.last_name}`.trim(),
-      email: user.email,
-      role: user.role || userType,
-      userType: userType,
-      status: user.status || 'active',
-      is_verified: user.is_verified,
-      // ✅ CRITICAL: Include hospital_id
-      hospital_id: user.hospital_id,
-      hospitalId: user.hospital_id,  // Alias for compatibility
-      department: user.department,
-      hospital_name: user.hospital_name,
-      phone: user.phone,
-      gender: user.gender,
-      age: user.age
-    };
+  // ✅ FORMAT the user data properly (same as login function)
+const formattedUser = {
+  id: user.id,
+  first_name: user.first_name,
+  middle_name: user.middle_name || '',
+  last_name: user.last_name,
+  full_name: `${user.first_name} ${user.middle_name ? user.middle_name + ' ' : ''}${user.last_name}`.trim(),
+  email: user.email,
+  role: user.role || userType,
+  userType: userType,
+  status: user.status || 'active',
+  is_verified: user.is_verified,
+  hospital_id: user.hospital_id,
+  hospitalId: user.hospital_id,
+  department: user.department,
+  hospital_name: user.hospital_name,
+  phone: user.phone,
+  gender: user.gender,
+  age: user.age,
+  ward: user.ward || null  // ← ADD THIS LINE
+};
+
+// Debug log
+console.log('✅ getProfile returning ward:', formattedUser.ward);
     
     // Add optional location fields if they exist
     if (user.region_name) formattedUser.region_name = user.region_name;
