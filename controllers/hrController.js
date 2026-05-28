@@ -1801,17 +1801,30 @@ export const markHRReportRead = async (req, res) => {
 // @route   GET /api/hr/hospital-admins
 export const getHospitalAdminsForHR = async (req, res) => {
   try {
-    const hospitalId = req.user.hospital_id || req.user.hospitalId;
-
-    if (!hospitalId) {
-      return res.json({ success: true, admins: [], message: 'No hospital ID found' });
+    const staffMember = await HospitalStaff.findByPk(req.user.id);
+    
+    if (!staffMember) {
+      return res.json({ success: true, admins: [], message: 'Staff not found' });
     }
-
-    // Query by hospital_id (foreign key), not by id (primary key)
+    
+    const hospitalId = staffMember.hospital_id;
+    
+    console.log(`🔍 Looking for hospital admins for hospital_id: ${hospitalId}`);
+    
+    // Query hospital admins by hospital_id (foreign key)
     const hospitalAdmins = await HospitalAdmin.findAll({
       where: { hospital_id: hospitalId },
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
+    
+    console.log(`✅ Found ${hospitalAdmins.length} hospital admins`);
+    
+    const formatFullName = (admin) => {
+      const firstName = admin.first_name || '';
+      const middleName = admin.middle_name ? ` ${admin.middle_name}` : '';
+      const lastName = admin.last_name || '';
+      return `${firstName}${middleName} ${lastName}`.trim();
+    };
     
     const formattedAdmins = hospitalAdmins.map(admin => ({
       id: admin.id,
