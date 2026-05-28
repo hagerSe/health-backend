@@ -1811,13 +1811,13 @@ export const getHospitalAdminsForHR = async (req, res) => {
     
     console.log(`🔍 Looking for hospital admins for hospital_id: ${hospitalId}`);
     
-    // Query hospital admins by hospital_id (foreign key)
+    // ✅ Query HospitalAdmin table (not HospitalStaff)
     const hospitalAdmins = await HospitalAdmin.findAll({
       where: { hospital_id: hospitalId },
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
     
-    console.log(`✅ Found ${hospitalAdmins.length} hospital admins`);
+    console.log(`✅ Found ${hospitalAdmins.length} hospital admins in HospitalAdmin table`);
     
     const formatFullName = (admin) => {
       const firstName = admin.first_name || '';
