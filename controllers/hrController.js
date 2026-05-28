@@ -1805,6 +1805,9 @@ export const markHRReportRead = async (req, res) => {
 // @desc    Get hospital admins for HR
 // @route   GET /api/hr/hospital-admins
 // @access  Private
+// @desc    Get hospital admins for HR
+// @route   GET /api/hr/hospital-admins
+// @access  Private
 export const getHospitalAdminsForHR = async (req, res) => {
   try {
     // Get the current logged-in staff member
@@ -1819,10 +1822,10 @@ export const getHospitalAdminsForHR = async (req, res) => {
     
     console.log(`🔍 HR: Looking for hospital admins for hospital_id: ${hospitalId}`);
     
-    // ✅ FIX: HospitalAdmin table uses 'id' as the hospital identifier
-    // The staffMember.hospital_id is actually the HospitalAdmin's id
+    // ✅ FIX: The HospitalAdmin table uses 'id' as the hospital identifier
+    // Since hospital_id in staff refers to the HospitalAdmin's id
     const hospitalAdmins = await HospitalAdmin.findAll({
-      where: { id: hospitalId },  // ✅ Use 'id' NOT 'hospital_id'
+      where: { id: hospitalId },  // ✅ Use 'id' not 'hospital_id'
       attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
     });
     
