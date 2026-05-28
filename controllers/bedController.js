@@ -75,16 +75,25 @@ export const getAvailableBeds = async (req, res) => {
 };
 
 // @desc    Get all beds
+// @desc    Get all beds
+// @route   GET /api/beds/all
+// @access  Private
 export const getAllBeds = async (req, res) => {
   try {
     const { ward, status, type, hospital_id } = req.query;
-    const hospitalId = hospital_id || req.user?.hospital_id;
+    // ✅ FIX: Use hospital_id from query params first
+    const hospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+
+    console.log('🛏️ Fetching beds for hospital_id:', hospitalId);
 
     if (!hospitalId) {
-      return res.status(400).json({ success: false, message: 'hospital_id is required' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'hospital_id is required' 
+      });
     }
 
-    const whereClause = { hospital_id: hospitalId };
+    const whereClause = { hospital_id: parseInt(hospitalId) };
     if (ward) whereClause.ward = ward;
     if (status) whereClause.status = status;
     if (type) whereClause.type = type;
@@ -95,10 +104,16 @@ export const getAllBeds = async (req, res) => {
       attributes: ['id', 'number', 'ward', 'type', 'status', 'notes', 'current_patient_name', 'current_patient_id', 'last_cleaned_at', 'last_occupied_at', 'createdAt', 'updatedAt']
     });
 
+    console.log(`✅ Found ${beds.length} beds`);
+
     res.json({ success: true, beds, count: beds.length });
   } catch (error) {
-    console.error('Error fetching beds:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error fetching beds:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      error: error.stack 
+    });
   }
 };
 
@@ -118,19 +133,31 @@ export const getBedById = async (req, res) => {
 };
 
 // @desc    Register new bed
+// @desc    Register new bed
+// @route   POST /api/beds/register
+// @access  Private
 export const registerBed = async (req, res) => {
   try {
     const { number, ward, type, notes, hospital_id } = req.body;
-    const hospitalId = hospital_id || req.user?.hospital_id;
+    // ✅ FIX: Use hospital_id from body or from user
+    const hospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
     const staffId = req.user.id;
 
+    console.log('➕ Registering bed:', { number, ward, hospitalId });
+
     if (!number || !ward || !hospitalId) {
-      return res.status(400).json({ success: false, message: 'Bed number, ward, and hospital_id are required' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Bed number, ward, and hospital_id are required' 
+      });
     }
 
     const validWards = ['OPD', 'EME', 'ANC'];
     if (!validWards.includes(ward)) {
-      return res.status(400).json({ success: false, message: `Invalid ward. Must be one of: ${validWards.join(', ')}` });
+      return res.status(400).json({ 
+        success: false, 
+        message: `Invalid ward. Must be one of: ${validWards.join(', ')}` 
+      });
     }
 
     const existingBed = await Bed.findOne({
@@ -138,7 +165,10 @@ export const registerBed = async (req, res) => {
     });
 
     if (existingBed) {
-      return res.status(400).json({ success: false, message: `Bed ${number} already exists in ${ward} ward` });
+      return res.status(400).json({ 
+        success: false, 
+        message: `Bed ${number} already exists in ${ward} ward` 
+      });
     }
 
     const newBed = await Bed.create({
@@ -152,6 +182,8 @@ export const registerBed = async (req, res) => {
       created_by: staffId
     });
 
+    console.log(`✅ Bed ${number} added to ${ward} ward`);
+
     const io = req.app.get('io');
     if (io) {
       io.to(`hospital_${hospitalId}_bed_management`).emit('new_bed_added', {
@@ -162,10 +194,18 @@ export const registerBed = async (req, res) => {
       });
     }
 
-    res.status(201).json({ success: true, message: `Bed ${number} registered successfully`, bed: newBed });
+    res.status(201).json({ 
+      success: true, 
+      message: `Bed ${number} registered successfully`, 
+      bed: newBed 
+    });
   } catch (error) {
-    console.error('Error registering bed:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error registering bed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      error: error.stack 
+    });
   }
 };
 
@@ -355,13 +395,22 @@ export const cleanBed = async (req, res) => {
 };
 
 // @desc    Get ward statistics
+// @desc    Get ward statistics
+// @route   GET /api/beds/stats/ward
+// @access  Private
 export const getWardStats = async (req, res) => {
   try {
     const { hospital_id } = req.query;
-    const hospitalId = hospital_id || req.user?.hospital_id;
-
+    // ✅ FIX: Use hospital_id from query params first, then from user
+    const hospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    console.log('📊 Fetching ward stats for hospital_id:', hospitalId);
+    
     if (!hospitalId) {
-      return res.status(400).json({ success: false, message: 'hospital_id is required' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'hospital_id is required' 
+      });
     }
 
     const wards = ['OPD', 'EME', 'ANC'];
@@ -388,11 +437,17 @@ export const getWardStats = async (req, res) => {
         occupancyRate
       });
     }
+    
+    console.log('✅ Ward stats fetched successfully:', stats);
 
     res.json({ success: true, stats });
   } catch (error) {
-    console.error('Error fetching ward stats:', error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Error fetching ward stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      error: error.stack 
+    });
   }
 };
 
