@@ -430,34 +430,49 @@ export const login = async (req, res) => {
     };
     
  // In your authController.js login function
+// Generate JWT token
 const token = jwt.sign(
   { 
     id: user.id, 
     email: user.email, 
-    type: 'staff',
-    role: user.role,
+    type: userType,
+    userType: userType,
+    role: role,
+    model: userModel,
     department: user.department,
-    hospital_id: user.hospital_id  // ← CRITICAL: Include this
+    hospital_id: user.hospital_id     // ✅ Include hospital_id in token
   },
-    process.env.JWT_SECRET || 'your-secret-key',
+  process.env.JWT_SECRET || 'your-secret-key',
   { expiresIn: '7d' }
 );
 
-    console.log("✅ JWT token generated");
+console.log("✅ JWT token generated");
 
-    // Prepare user data for response
-    const userData = {
-      id: user.id,
-      first_name: user.first_name,
-      middle_name: user.middle_name || '',
-      last_name: user.last_name,
-      full_name: `${user.first_name} ${user.middle_name ? user.middle_name + ' ' : ''}${user.last_name}`.trim(),
-      email: user.email,
-      role: role,
-      userType: userType,
-      status: user.status || 'active',
-      is_verified: user.is_verified
-    };
+// Prepare user data for response
+const userData = {
+  id: user.id,
+  first_name: user.first_name,
+  middle_name: user.middle_name || '',
+  last_name: user.last_name,
+  full_name: `${user.first_name} ${user.middle_name ? user.middle_name + ' ' : ''}${user.last_name}`.trim(),
+  email: user.email,
+  role: role,
+  userType: userType,
+  status: user.status || 'active',
+  is_verified: user.is_verified,
+  hospital_id: user.hospital_id,      // ✅ Add this
+  hospitalId: user.hospital_id,       // ✅ Add this for compatibility
+  department: user.department,        // ✅ Add this
+  hospital_name: user.hospital_name   // ✅ Add this if available
+};
+
+// Add optional fields if they exist
+if (user.region_name) userData.region_name = user.region_name;
+if (user.zone_name) userData.zone_name = user.zone_name;
+if (user.woreda_name) userData.woreda_name = user.woreda_name;
+if (user.kebele_name) userData.kebele_name = user.kebele_name;
+if (user.hospital_name && !userData.hospital_name) userData.hospital_name = user.hospital_name;
+if (user.department && !userData.department) userData.department = user.department;
 
     // Add optional fields if they exist
     if (user.region_name) userData.region_name = user.region_name;
