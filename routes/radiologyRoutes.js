@@ -24,28 +24,98 @@ import {
 const router = express.Router();
 
 // ==================== RADIOLOGY REQUEST ROUTES ====================
-router.get('/pending', protect, restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin'), getPendingRequests);
-router.get('/in-progress', protect, restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin'), getInProgressRequests);
-router.get('/completed', protect, restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin'), getCompletedRequests);
-router.put('/requests/:id/start', protect, restrictTo('radiology', 'radiologist', 'radio'), startExam);
-router.post('/upload/:id', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.array('images', 20), uploadImages);
+// GET routes - allow multiple roles
+router.get('/pending', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin', 'admin', 'staff', 'doctor'), 
+  getPendingRequests
+);
 
-// ✅ FIX: Add upload middleware to handle image uploads
-router.put('/report/:id', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.array('images', 20), submitReport);
+router.get('/in-progress', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin', 'admin', 'staff', 'doctor'), 
+  getInProgressRequests
+);
 
-router.get('/report/:id', protect, restrictTo('radiology', 'radiologist', 'radio', 'doctor', 'nurse'), getReport);
+router.get('/completed', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'hospital_admin', 'admin', 'staff', 'doctor'), 
+  getCompletedRequests
+);
+
+// PUT routes - staff level access
+router.put('/requests/:id/start', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'staff', 'doctor', 'admin'), 
+  startExam
+);
+
+router.put('/report/:id', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'staff', 'doctor', 'admin'), 
+  upload.array('images', 20), 
+  submitReport
+);
+
+// GET report - view access for multiple roles
+router.get('/report/:id', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'doctor', 'nurse', 'staff', 'admin'), 
+  getReport
+);
+
+// Image upload route
+router.post('/upload/:id', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'staff', 'admin'), 
+  upload.array('images', 20), 
+  uploadImages
+);
 
 // ==================== PROFILE ROUTES ====================
+// Profile routes - allow any authenticated user (no role restriction)
 router.get('/profile', protect, getRadiologyProfile);
 router.put('/profile', protect, updateRadiologyProfile);
 router.put('/change-password', protect, changeRadiologyPassword);
 
 // ==================== REPORT ROUTES ====================
-router.get('/hospital-admins', protect, restrictTo('radiology', 'radiologist', 'radio'), getHospitalAdminsForRadiology);
-router.get('/reports/inbox', protect, restrictTo('radiology', 'radiologist', 'radio'), getRadiologyReportsInbox);
-router.get('/reports/outbox', protect, restrictTo('radiology', 'radiologist', 'radio'), getRadiologyReportsOutbox);
-router.post('/reports/send', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.array('attachments', 5), sendRadiologyReport);
-router.post('/reports/:id/reply', protect, restrictTo('radiology', 'radiologist', 'radio'), upload.single('attachment'), replyToRadiologyReport);
-router.put('/reports/:id/read', protect, restrictTo('radiology', 'radiologist', 'radio'), markRadiologyReportRead);
+// Report routes - staff level access
+router.get('/hospital-admins', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'admin', 'staff', 'hospital_admin'), 
+  getHospitalAdminsForRadiology
+);
 
-export default router; 
+router.get('/reports/inbox', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'admin', 'staff', 'hospital_admin'), 
+  getRadiologyReportsInbox
+);
+
+router.get('/reports/outbox', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'admin', 'staff', 'hospital_admin'), 
+  getRadiologyReportsOutbox
+);
+
+router.post('/reports/send', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'admin', 'staff'), 
+  upload.array('attachments', 5), 
+  sendRadiologyReport
+);
+
+router.post('/reports/:id/reply', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'admin', 'staff'), 
+  upload.single('attachment'), 
+  replyToRadiologyReport
+);
+
+router.put('/reports/:id/read', 
+  protect, 
+  restrictTo('radiology', 'radiologist', 'radio', 'admin', 'staff', 'hospital_admin'), 
+  markRadiologyReportRead
+);
+
+export default router;
