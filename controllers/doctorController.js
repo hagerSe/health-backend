@@ -656,15 +656,16 @@ export const getRadiologyResults = async (req, res) => {
       if (radiologyRequests.length > 0) {
         const requestIds = radiologyRequests.map(req => req.id);
         
-        // ✅ FIXED: Use radiology_request_id instead of request_id
+        // ✅ FIXED: Use 'request_id' instead of 'radiology_request_id'
         const radiologyReports = await RadiologyReport.findAll({
-          where: { radiology_request_id: { [Op.in]: requestIds } }
+          where: { request_id: { [Op.in]: requestIds } }
         });
         
         console.log(`📋 Found ${radiologyReports.length} radiology reports`);
         
         results = radiologyRequests.map(req => {
-          const report = radiologyReports.find(r => r.radiology_request_id === req.id);
+          // ✅ FIXED: Match by request_id
+          const report = radiologyReports.find(r => r.request_id === req.id);
           
           let images = [];
           if (report && report.images) {
@@ -742,8 +743,9 @@ export const getRadiologyReportByRequestId = async (req, res) => {
       });
     }
     
-  const report = await RadiologyReport.findOne({
-  where: { radiology_request_id: requestId }  // ✅ Use radiology_request_id
+;
+const report = await RadiologyReport.findOne({
+  where: { request_id: requestId }  // ✅ Use request_id
 });
     
     let images = [];
