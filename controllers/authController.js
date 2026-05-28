@@ -215,7 +215,6 @@ const checkEmailInAllTables = async (email) => {
 
 // ==================== LOGIN FUNCTION ====================
 // ==================== LOGIN FUNCTION - COMPLETELY FIXED ====================
-// ==================== LOGIN FUNCTION - FIXED ====================
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -223,6 +222,7 @@ export const login = async (req, res) => {
     console.log("=".repeat(60));
     console.log("🔐 Login attempt");
     console.log("Email:", email);
+    console.log("Password length:", password?.length);
     console.log("=".repeat(60));
 
     // Validate inputs
@@ -235,23 +235,23 @@ export const login = async (req, res) => {
 
     // Clean and normalize email
     const normalizedEmail = String(email).toLowerCase().trim();
-    const cleanPassword = String(password);
+    const cleanPassword = String(password); // Don't trim passwords
+
+    console.log("Normalized email:", normalizedEmail);
 
     let user = null;
     let role = null;
     let userType = null;
     let userModel = null;
 
-    // Search for user in ALL tables
-    // Hospital Staff (most common for your users)
-    user = await HospitalStaff.findOne({ where: { email: normalizedEmail } });
+    // Search for user in ALL tables (your existing search logic)
+    // User table
+    user = await User.findOne({ where: { email: normalizedEmail } });
     if (user) {
-      role = user.department || 'staff';
-      userType = 'staff';
-      userModel = 'HospitalStaff';
-      console.log("Found in HospitalStaff table");
-      console.log("Department:", user.department);
-      console.log("Hospital ID:", user.hospital_id);
+      role = user.role || 'staff';
+      userType = user.role === 'staff' ? 'staff' : user.role;
+      userModel = 'User';
+      console.log("Found in User table");
     }
 
     // Federal Admin
@@ -320,6 +320,18 @@ export const login = async (req, res) => {
       }
     }
 
+    // Hospital Staff
+    if (!user) {
+      user = await HospitalStaff.findOne({ where: { email: normalizedEmail } });
+      if (user) {
+        role = user.department || 'staff';
+        userType = 'staff';
+        userModel = 'HospitalStaff';
+        console.log("Found in HospitalStaff table");
+        console.log("Department:", user.department);
+      }
+    }
+
     // User not found
     if (!user) {
       console.log("❌ User not found in any table");
@@ -332,9 +344,11 @@ export const login = async (req, res) => {
     console.log("✅ User found");
     console.log("User ID:", user.id);
     console.log("Is Verified:", user.is_verified);
+    console.log("Status:", user.status);
 
     // Check if account is active
     if (user.status && user.status === 'inactive') {
+      console.log("❌ Account is inactive");
       return res.status(401).json({
         success: false,
         message: "Account is deactivated. Contact your administrator."
@@ -359,22 +373,39 @@ export const login = async (req, res) => {
       });
     }
 
-    // Password verification
+    // ========== PASSWORD VERIFICATION - IMPROVED ==========
+    console.log("Stored password hash:", user.password ? user.password.substring(0, 30) + "..." : "null");
+    
     let isMatch = false;
+    
     try {
+      // Method 1: Standard bcrypt compare
       isMatch = await bcrypt.compare(cleanPassword, user.password);
-      console.log("Password match:", isMatch);
+      console.log("bcrypt.compare result:", isMatch);
       
+      // Method 2: If bcrypt fails, try direct comparison (for plain text passwords)
       if (!isMatch && user.password === cleanPassword) {
         console.log("Plain text password match detected!");
         isMatch = true;
+        
+        // Upgrade to hash
         const newHash = await bcrypt.hash(cleanPassword, 10);
         user.password = newHash;
         await user.save();
+        console.log("✅ Password upgraded from plain text to hash");
       }
+      
+      // Method 3: Try comparing after trimming (edge cases)
+      if (!isMatch && user.password && user.password.trim() === cleanPassword) {
+        console.log("Trim match detected!");
+        isMatch = true;
+      }
+      
     } catch (bcryptError) {
       console.error("bcrypt error:", bcryptError.message);
+      // Fallback to direct comparison if bcrypt fails
       isMatch = (user.password === cleanPassword);
+      console.log("Fallback direct comparison result:", isMatch);
     }
     
     if (!isMatch) {
@@ -384,27 +415,37 @@ export const login = async (req, res) => {
         message: "Invalid email or password" 
       });
     }
+    // ========== END PASSWORD VERIFICATION ==========
 
     console.log("✅ Password verified successfully!");
 
-    // ✅ FIXED: Generate JWT token with hospital_id
-    const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
-        type: userType,
-        userType: userType,
-        role: role,
-        department: user.department,
-        hospital_id: user.hospital_id  // ✅ CRITICAL: Include this
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    );
+    // Generate JWT token
+    const tokenPayload = { 
+      id: user.id, 
+      email: user.email, 
+      type: userType,
+      userType: userType,
+      role: role,
+      model: userModel
+    };
+    
+ // In your authController.js login function
+const token = jwt.sign(
+  { 
+    id: user.id, 
+    email: user.email, 
+    type: 'staff',
+    role: user.role,
+    department: user.department,
+    hospital_id: user.hospital_id  // ← CRITICAL: Include this
+  },
+    process.env.JWT_SECRET || 'your-secret-key',
+  { expiresIn: '7d' }
+);
 
-    console.log("✅ JWT token generated with hospital_id:", user.hospital_id);
+    console.log("✅ JWT token generated");
 
-    // ✅ FIXED: Prepare user data for response WITH hospital_id
+    // Prepare user data for response
     const userData = {
       id: user.id,
       first_name: user.first_name,
@@ -415,29 +456,25 @@ export const login = async (req, res) => {
       role: role,
       userType: userType,
       status: user.status || 'active',
-      is_verified: user.is_verified,
-      // ✅ CRITICAL: Add hospital_id
-      hospital_id: user.hospital_id,
-      hospitalId: user.hospital_id,  // Also add as hospitalId for compatibility
-      department: user.department,
-      ward: user.ward
+      is_verified: user.is_verified
     };
 
     // Add optional fields if they exist
+    if (user.region_name) userData.region_name = user.region_name;
+    if (user.zone_name) userData.zone_name = user.zone_name;
+    if (user.woreda_name) userData.woreda_name = user.woreda_name;
+    if (user.kebele_name) userData.kebele_name = user.kebele_name;
     if (user.hospital_name) userData.hospital_name = user.hospital_name;
-    if (user.phone) userData.phone = user.phone;
-    if (user.gender) userData.gender = user.gender;
-    if (user.age) userData.age = user.age;
-
-    console.log("✅ userData prepared with hospital_id:", userData.hospital_id);
-    console.log("=".repeat(60));
-    console.log(`✅ LOGIN SUCCESSFUL for: ${normalizedEmail} (${userType})`);
-    console.log(`✅ Hospital ID: ${user.hospital_id}`);
-    console.log("=".repeat(60));
+    if (user.department) userData.department = user.department;
 
     // Update last login time
     user.last_login = new Date();
     await user.save();
+    console.log("✅ Last login time updated");
+
+    console.log("=".repeat(60));
+    console.log(`✅ LOGIN SUCCESSFUL for: ${normalizedEmail} (${userType})`);
+    console.log("=".repeat(60));
 
     // Send success response
     res.json({
