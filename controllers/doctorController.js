@@ -631,87 +631,111 @@ export const getRadiologyResults = async (req, res) => {
     const { patientId } = req.params;
     const { doctor_id, hospital_id } = req.query;
     
-    console.log(`📷 Fetching radiology results for patient: ${patientId}, hospital: ${hospital_id}`);
+    console.log(`📷 Fetching radiology results for patient: ${patientId}, hospital: ${hospital_id}, doctor: ${doctor_id}`);
     
-    let results = [];
-    
-    try {
-      const whereClause = { patient_id: patientId };
-      
-      if (hospital_id) {
-        whereClause.hospital_id = parseInt(hospital_id);
-      }
-      
-      if (doctor_id) {
-        whereClause.doctor_id = doctor_id;
-      }
-      
-      const radiologyRequests = await RadiologyRequest.findAll({
-        where: whereClause,
-        order: [['createdAt', 'DESC']]
-      });
-      
-      console.log(`📋 Found ${radiologyRequests.length} radiology requests for patient ${patientId}`);
-      
-      if (radiologyRequests.length > 0) {
-        const requestIds = radiologyRequests.map(req => req.id);
-        
-        // ✅ FIXED: Use 'request_id' instead of 'radiology_request_id'
-        const radiologyReports = await RadiologyReport.findAll({
-          where: { request_id: { [Op.in]: requestIds } }
-        });
-        
-        console.log(`📋 Found ${radiologyReports.length} radiology reports`);
-        
-        results = radiologyRequests.map(req => {
-          // ✅ FIXED: Match by request_id
-          const report = radiologyReports.find(r => r.request_id === req.id);
-          
-          let images = [];
-          if (report && report.images) {
-            try {
-              images = typeof report.images === 'string' ? JSON.parse(report.images) : report.images;
-            } catch (e) {
-              images = [];
-            }
-          }
-          
-          return {
-            id: report ? report.id : null,
-            unique_key: `rad_${req.id}`,
-            request_id: req.id,
-            request_number: req.request_number,
-            patient_id: req.patient_id,
-            patient_name: req.patient_name,
-            doctor_id: req.doctor_id,
-            doctor_name: req.doctor_name,
-            exam_type: req.exam_type,
-            body_part: req.body_part,
-            clinical_notes: req.clinical_notes,
-            findings: report?.findings || null,
-            impression: report?.impression || null,
-            recommendations: report?.recommendations || null,
-            status: report ? 'completed' : req.status,
-            critical: report?.critical || false,
-            reported_by: report?.radiologist_name || report?.reported_by || null,
-            reported_at: report?.submitted_at || report?.reported_at || null,
-            images: images,
-            images_count: images.length,
-            has_report: !!report,
-            requested_at: req.createdAt
-          };
-        });
-      }
-      
-      console.log(`✅ Returning ${results.length} radiology results`);
-      
-    } catch (error) {
-      console.error('Error fetching radiology results:', error);
+    // Build where clause for requests
+    const whereClause = { patient_id: patientId };
+    if (hospital_id) {
+      whereClause.hospital_id = parseInt(hospital_id);
     }
-
+    if (doctor_id) {
+      whereClause.doctor_id = parseInt(doctor_id);
+    }
+    
+    console.log('🔍 Request where clause:', JSON.stringify(whereClause));
+    
+    // Find all radiology requests for this patient
+    const radiologyRequests = await RadiologyRequest.findAll({
+      where: whereClause,
+      order: [['createdAt', 'DESC']]
+    });
+    
+    console.log(`📋 Found ${radiologyRequests.length} radiology requests for patient ${patientId}`);
+    
+    if (radiologyRequests.length === 0) {
+      return res.json({ success: true, results: [] });
+    }
+    
+    const requestIds = radiologyRequests.map(req => req.id);
+    console.log(`📋 Request IDs: ${requestIds.join(', ')}`);
+    
+    // ✅ Try BOTH column names to find reports
+    const reportsByRequestId = await RadiologyReport.findAll({
+      where: { request_id: { [Op.in]: requestIds } }
+    });
+    
+    const reportsByRadiologyRequestId = await RadiologyReport.findAll({
+      where: { radiology_request_id: { [Op.in]: requestIds } }
+    });
+    
+    console.log(`📋 Found ${reportsByRequestId.length} reports using request_id`);
+    console.log(`📋 Found ${reportsByRadiologyRequestId.length} reports using radiology_request_id`);
+    
+    // Merge both sets of reports
+    const allReports = [...reportsByRequestId, ...reportsByRadiologyRequestId];
+    
+    // Remove duplicates by id
+    const uniqueReports = [];
+    const seenIds = new Set();
+    for (const report of allReports) {
+      if (!seenIds.has(report.id)) {
+        seenIds.add(report.id);
+        uniqueReports.push(report);
+      }
+    }
+    
+    console.log(`📋 Total unique reports found: ${uniqueReports.length}`);
+    
+    // Map results
+    const results = radiologyRequests.map(req => {
+      // Try to find report by either column
+      const report = uniqueReports.find(r => 
+        r.request_id === req.id || r.radiology_request_id === req.id
+      );
+      
+      console.log(`📝 Request ${req.id} (${req.exam_type}): Report found = ${!!report}`);
+      
+      let images = [];
+      if (report && report.images) {
+        try {
+          images = typeof report.images === 'string' ? JSON.parse(report.images) : report.images;
+        } catch (e) {
+          console.error('Error parsing images:', e);
+          images = [];
+        }
+      }
+      
+      return {
+        id: report ? report.id : null,
+        unique_key: `rad_${req.id}`,
+        request_id: req.id,
+        request_number: req.request_number,
+        patient_id: req.patient_id,
+        patient_name: req.patient_name,
+        doctor_id: req.doctor_id,
+        doctor_name: req.doctor_name,
+        exam_type: req.exam_type,
+        body_part: req.body_part,
+        clinical_notes: req.clinical_notes,
+        findings: report?.findings || 'No findings recorded',
+        impression: report?.impression || null,
+        recommendations: report?.recommendations || null,
+        status: report ? 'completed' : req.status,
+        critical: report?.critical || false,
+        reported_by: report?.radiologist_name || report?.reported_by || null,
+        reported_at: report?.submitted_at || report?.reported_at || null,
+        images: images,
+        images_count: images.length,
+        has_report: !!report,
+        requested_at: req.createdAt
+      };
+    });
+    
+    console.log(`✅ Returning ${results.length} radiology results`);
+    
     res.json({
       success: true,
-      results: results || []
+      results: results
     });
 
   } catch (error) {
@@ -730,7 +754,6 @@ export const getRadiologyResults = async (req, res) => {
 export const getRadiologyReportByRequestId = async (req, res) => {
   try {
     const { requestId } = req.params;
-    const { hospital_id } = req.query;
     
     console.log(`📷 Fetching radiology report for request: ${requestId}`);
     
@@ -743,10 +766,18 @@ export const getRadiologyReportByRequestId = async (req, res) => {
       });
     }
     
-;
-const report = await RadiologyReport.findOne({
-  where: { request_id: requestId }  // ✅ Use request_id
-});
+    // ✅ Try BOTH column names
+    let report = await RadiologyReport.findOne({
+      where: { request_id: requestId }
+    });
+    
+    if (!report) {
+      report = await RadiologyReport.findOne({
+        where: { radiology_request_id: requestId }
+      });
+    }
+    
+    console.log(`📋 Report found: ${!!report}`);
     
     let images = [];
     if (report && report.images) {
