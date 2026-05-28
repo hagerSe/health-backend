@@ -238,55 +238,19 @@ export const registerPatient = async (req, res) => {
 
 // ==================== SEARCH PATIENTS ====================
 export const searchPatients = async (req, res) => {
-  try {
-    const { query } = req.query;
-    const hospitalId = req.query.hospital_id;
-    
-    if (!hospitalId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Hospital ID is required',
-        patients: [],
-        count: 0
-      });
-    }
-    
-    const whereClause = {
-      hospital_id: parseInt(hospitalId)
-    };
-
-    if (query && query.trim()) {
-      whereClause[Op.or] = [
-        { card_number: { [Op.like]: `%${query}%` } },
-        { first_name: { [Op.like]: `%${query}%` } },
-        { middle_name: { [Op.like]: `%${query}%` } },
-        { last_name: { [Op.like]: `%${query}%` } },
-        { phone: { [Op.like]: `%${query}%` } }
-      ];
-    }
-
-    const patients = await Patient.findAll({
-      where: whereClause,
-      order: [['registered_at', 'DESC']],
-      limit: 50
-    });
-
-    res.json({
-      success: true,
-      patients: patients || [],
-      count: patients?.length || 0
-    });
-
-  } catch (error) {
-    console.error('Patient search error:', error);
-    res.status(500).json({ 
+  const { query } = req.query;
+  const hospitalId = req.query.hospital_id;  // ← This is REQUIRED
+  
+  if (!hospitalId) {
+    return res.status(400).json({   // ← This is why you get 400!
       success: false, 
-      message: error.message || 'Error searching patients',
+      message: 'Hospital ID is required',
       patients: [],
       count: 0
     });
   }
-};
+  // ...
+}
 
 // ==================== GET PATIENT BY ID ====================
 export const getPatientById = async (req, res) => {
