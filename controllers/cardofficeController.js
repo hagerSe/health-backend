@@ -7,6 +7,7 @@ import HospitalStaff from '../models/HospitalStaff.js';
 import HospitalAdmin from '../models/HospitalAdmin.js';
 import Report from '../models/Report.js';
 import Schedule from '../models/Schedule.js';
+import { saveAttachments } from '../utils/attachmentHelper.js';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
 import multer from 'multer';
@@ -741,20 +742,13 @@ export const sendCardOfficeReport = async (req, res) => {
       return res.status(404).json({ success: false, message: "Recipient not found" });
     }
 
-    const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-    // ✅ FIXED: Handle file attachments correctly
+    // ✅ FIXED: Save attachments using helper
     let attachments = [];
     if (req.files && req.files.length > 0) {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      attachments = req.files.map(file => ({
-        name: file.originalname,
-        url: `${baseUrl}/uploads/reports/${file.filename}`,
-        type: file.mimetype,
-        size: file.size,
-        uploaded_at: new Date()
-      }));
-      console.log(`✅ ${attachments.length} attachment(s) processed`);
+      attachments = await saveAttachments(req.files, 'cardoffice');
+      console.log(`✅ ${attachments.length} attachment(s) processed and saved`);
     }
 
     const report = await Report.create({
@@ -763,7 +757,7 @@ export const sendCardOfficeReport = async (req, res) => {
       body,
       priority: priority || 'medium',
       status: 'sent',
-      attachments: attachments, // Store attachments as JSON
+      attachments: attachments, // ✅ Now saved to database
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -787,13 +781,17 @@ export const sendCardOfficeReport = async (req, res) => {
         title: report.title,
         priority: report.priority,
         sender_name: formatFullName(sender),
-        has_attachments: attachments.length > 0
+        has_attachments: attachments.length > 0,
+        attachments_count: attachments.length
       });
     }
 
     res.status(201).json({ 
       success: true, 
-      report, 
+      report: {
+        ...report.toJSON(),
+        attachments_count: attachments.length
+      },
       message: "Report sent successfully" 
     });
   } catch (error) {
@@ -801,6 +799,78 @@ export const sendCardOfficeReport = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ==================== FIXED REPLY TO REPORT ====================
+export const replyToCardOfficeReport = async (req, res) => {
+  try {
+    const { body } = req.body;
+    const parentReport = await Report.findByPk(req.params.id);
+
+    if (!parentReport) {
+      return res.status(404).json({ success: false, message: "Report not found" });
+    }
+
+    const sender = await HospitalStaff.findByPk(req.user.id);
+    if (!sender) {
+      return res.status(404).json({ success: false, message: "Sender not found" });
+    }
+
+    const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    // ✅ FIXED: Save reply attachments
+    let attachments = [];
+    if (req.file) {
+      attachments = await saveAttachments([req.file], 'cardoffice');
+      console.log(`✅ Reply attachment processed: ${attachments[0]?.name}`);
+    }
+
+    const reply = await Report.create({
+      report_number,
+      title: `Re: ${parentReport.title}`,
+      body,
+      priority: parentReport.priority,
+      status: 'sent',
+      attachments: attachments, // ✅ Now saved to database
+      sender_id: sender.id,
+      sender_type: 'staff',
+      sender_first_name: sender.first_name,
+      sender_middle_name: sender.middle_name,
+      sender_last_name: sender.last_name,
+      sender_full_name: formatFullName(sender),
+      recipient_id: parentReport.sender_id,
+      recipient_type: parentReport.sender_type,
+      recipient_first_name: parentReport.sender_first_name,
+      recipient_middle_name: parentReport.sender_middle_name,
+      recipient_last_name: parentReport.sender_last_name,
+      recipient_full_name: parentReport.sender_full_name,
+      parent_report_id: parentReport.id,
+      sent_at: new Date(),
+      last_activity_at: new Date()
+    });
+
+    await parentReport.update({ 
+      status: 'replied', 
+      last_activity_at: new Date(),
+      reply_count: (parentReport.reply_count || 0) + 1
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`staff_${parentReport.sender_id}`).emit('report_reply_from_cardoffice', {
+        report_id: reply.id,
+        title: reply.title,
+        sender_name: formatFullName(sender),
+        has_attachments: attachments.length > 0
+      });
+    }
+
+    res.json({ success: true, reply, message: "Reply sent successfully" });
+  } catch (error) {
+    console.error("Reply to card office report error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const replyToCardOfficeReport = async (req, res) => {
   try {
     const { body } = req.body;

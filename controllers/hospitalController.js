@@ -6,6 +6,7 @@ import Patient from "../models/Patient.js";
 import KebeleAdmin from "../models/KebeleAdmin.js";
 import sequelize from "../config/database.js";
 import bcrypt from "bcryptjs";
+import { saveAttachments } from '../utils/attachmentHelper.js';
 import { Op } from "sequelize";
 
 // ==================== PROFILE MANAGEMENT ====================
@@ -307,6 +308,10 @@ export const deleteStaff = async (req, res) => {
 
 // ==================== REPORT MANAGEMENT WITH CHAT-LIKE REPLIES ====================
 
+// controllers/hospitalController.js - Add at top
+
+
+// ==================== FIXED SEND REPORT ====================
 export const sendReport = async (req, res) => {
   try {
     const { title, subject, body, priority, recipient_type, recipient_id } = req.body;
@@ -353,8 +358,16 @@ export const sendReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
     
+    // ✅ FIXED: Save attachments
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
+      attachments = await saveAttachments(req.files, 'hospital');
+      console.log(`✅ ${attachments.length} attachment(s) saved for hospital report`);
+    }
+    
     const report = await Report.create({
       report_number, title, subject: subject || title, body, priority: priority || 'medium', status: 'sent',
+      attachments: attachments, // ✅ Save to database
       sender_id: sender.id, sender_type: 'hospital',
       sender_first_name: sender.first_name, sender_middle_name: sender.middle_name, sender_last_name: sender.last_name,
       sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
@@ -375,13 +388,109 @@ export const sendReport = async (req, res) => {
         report_id: report.id, report_number: report.report_number, title: report.title,
         priority: report.priority, sender_name: `${sender.first_name} ${sender.last_name}`,
         sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
-        sent_at: report.sent_at, body_preview: body.substring(0, 100), body: body, has_attachments: false
+        sent_at: report.sent_at, body_preview: body.substring(0, 100), body: body,
+        has_attachments: attachments.length > 0,
+        attachments_count: attachments.length
       });
     }
     
     res.status(201).json({ success: true, report, message: "Report sent successfully" });
   } catch (error) {
     console.error("Send report error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==================== FIXED REPLY TO REPORT ====================
+export const replyToReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { body } = req.body;
+    const admin = req.user;
+    
+    if (!body && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ success: false, message: 'Reply message or attachment is required' });
+    }
+    
+    const parentReport = await Report.findByPk(id);
+    if (!parentReport) {
+      return res.status(404).json({ success: false, message: 'Report not found' });
+    }
+    
+    let recipient = null;
+    let recipientFullName = '';
+    let recipientDepartment = '';
+    let recipientWard = '';
+    
+    if (parentReport.sender_type === 'staff') {
+      recipient = await HospitalStaff.findByPk(parentReport.sender_id);
+      if (recipient) {
+        recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name || ''} ${recipient.last_name || ''}`.trim();
+        recipientDepartment = recipient.department || '';
+        recipientWard = recipient.ward || '';
+      }
+    } else if (parentReport.sender_type === 'kebele') {
+      recipient = await KebeleAdmin.findByPk(parentReport.sender_id);
+      if (recipient) {
+        recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name || ''} ${recipient.last_name || ''}`.trim();
+      }
+    }
+    
+    if (!recipient) {
+      return res.status(404).json({ success: false, message: 'Recipient not found' });
+    }
+    
+    const report_number = `RPT-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const threadId = parentReport.thread_id || parentReport.id;
+    
+    // ✅ FIXED: Save reply attachments
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
+      attachments = await saveAttachments(req.files, 'hospital');
+      console.log(`✅ ${attachments.length} attachment(s) saved for reply`);
+    }
+    
+    const reply = await Report.create({
+      report_number, title: `Re: ${parentReport.title}`, subject: parentReport.subject, body: body || '',
+      priority: parentReport.priority, status: 'sent',
+      attachments: attachments, // ✅ Save to database
+      sender_id: admin.id, sender_type: 'hospital',
+      sender_first_name: admin.first_name, sender_middle_name: admin.middle_name, sender_last_name: admin.last_name,
+      sender_full_name: `${admin.first_name || ''} ${admin.middle_name || ''} ${admin.last_name || ''}`.trim(),
+      sender_title: `Hospital Admin - ${admin.hospital_name}`, sender_hospital: admin.hospital_name, sender_hospital_id: admin.id,
+      recipient_id: recipient.id, recipient_type: parentReport.sender_type,
+      recipient_first_name: recipient.first_name, recipient_middle_name: recipient.middle_name, recipient_last_name: recipient.last_name,
+      recipient_full_name: recipientFullName, recipient_hospital: recipient.hospital_name, recipient_hospital_id: recipient.hospital_id,
+      recipient_department: recipientDepartment, recipient_ward: recipientWard,
+      parent_report_id: parentReport.id, thread_id: threadId,
+      sent_at: new Date(), last_activity_at: new Date()
+    });
+    
+    await parentReport.update({ status: 'replied', last_activity_at: new Date(), reply_count: (parentReport.reply_count || 0) + 1 });
+    
+    const io = req.app.get('io');
+    if (io) {
+      let recipientRoom = '';
+      if (parentReport.sender_type === 'staff') {
+        recipientRoom = `hospital_${recipient.hospital_id}_staff_${recipient.id}`;
+      } else if (parentReport.sender_type === 'kebele') {
+        recipientRoom = `kebele_${recipient.id}`;
+      }
+      
+      if (recipientRoom) {
+        io.to(recipientRoom).emit('report_reply_from_hospital', {
+          report_id: reply.id, parent_report_id: parentReport.id, report_number: reply.report_number,
+          title: reply.title, priority: reply.priority, sender_name: `${admin.first_name} ${admin.last_name}`,
+          sender_department: 'Hospital Admin', sent_at: reply.sent_at, body_preview: (body || '').substring(0, 100),
+          is_reply: true, has_attachments: attachments.length > 0,
+          attachments_count: attachments.length
+        });
+      }
+    }
+    
+    res.json({ success: true, reply, message: "Reply sent successfully" });
+  } catch (error) {
+    console.error('Reply to report error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
