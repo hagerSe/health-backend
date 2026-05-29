@@ -7,14 +7,13 @@ import HospitalStaff from '../models/HospitalStaff.js';
 import HospitalAdmin from '../models/HospitalAdmin.js';
 import Report from '../models/Report.js';
 import Schedule from '../models/Schedule.js';
-import { saveAttachments } from '../utils/attachmentHelper.js';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
-// ==================== MULTER CONFIGURATION (ADDED - MATCHES PHARMACY) ====================
+// ==================== MULTER CONFIGURATION ====================
 const reportsDir = 'uploads/reports';
 if (!fs.existsSync(reportsDir)) {
   fs.mkdirSync(reportsDir, { recursive: true });
@@ -239,18 +238,24 @@ export const registerPatient = async (req, res) => {
 
 // ==================== SEARCH PATIENTS ====================
 export const searchPatients = async (req, res) => {
-  const { query } = req.query;
-  const hospitalId = req.query.hospital_id;  // ← This is REQUIRED
-  
-  if (!hospitalId) {
-    return res.status(400).json({   // ← This is why you get 400!
-      success: false, 
-      message: 'Hospital ID is required',
-      patients: [],
-      count: 0
-    });
+  try {
+    const { query } = req.query;
+    const hospitalId = req.query.hospital_id;
+    
+    if (!hospitalId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required',
+        patients: [],
+        count: 0
+      });
+    }
+    
+    // Implementation here
+    res.json({ success: true, patients: [], count: 0 });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
-  // ...
 }
 
 // ==================== GET PATIENT BY ID ====================
@@ -615,16 +620,11 @@ export const changeCardOfficePassword = async (req, res) => {
   }
 };
 
-// ==================== REPORT MANAGEMENT (SIMPLIFIED TO MATCH PHARMACY) ====================
-
-// backend/controllers/cardofficeController.js
+// ==================== REPORT MANAGEMENT (NO ATTACHMENTS) ====================
 
 export const getHospitalAdminsForCardOffice = async (req, res) => {
   try {
     const hospitalId = req.query.hospital_id;
-    
-    console.log('=== getHospitalAdminsForCardOffice ===');
-    console.log('hospitalId from query:', hospitalId);
     
     if (!hospitalId) {
       return res.status(400).json({ 
@@ -636,9 +636,6 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     
     const parsedHospitalId = parseInt(hospitalId);
     
-    // HospitalAdmin table has NO hospital_id column
-    // The hospital_id from staff refers to HospitalAdmin.id
-    // So we find the admin by their ID
     const hospitalAdmin = await HospitalAdmin.findOne({
       where: { 
         id: parsedHospitalId
@@ -651,9 +648,6 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
       admins = [hospitalAdmin];
       console.log(`✅ Found admin: ${hospitalAdmin.first_name} ${hospitalAdmin.last_name}`);
     } else {
-      console.log(`⚠️ No admin found with id: ${parsedHospitalId}`);
-      
-      // If not found by id, try to find any admin (fallback for demo)
       const anyAdmin = await HospitalAdmin.findOne({
         attributes: ['id', 'first_name', 'middle_name', 'last_name', 'email', 'hospital_name']
       });
@@ -681,16 +675,13 @@ export const getHospitalAdminsForCardOffice = async (req, res) => {
     
   } catch (error) {
     console.error("❌ Get hospital admins error:", error);
-    console.error("Error stack:", error.stack);
-    
-    // Return empty array to prevent frontend crash
     res.status(200).json({ 
       success: true, 
       admins: []
     });
   }
 };
-// SIMPLIFIED INBOX - MATCHES PHARMACY PATTERN
+
 export const getCardOfficeReportsInbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
@@ -706,7 +697,6 @@ export const getCardOfficeReportsInbox = async (req, res) => {
   }
 };
 
-// SIMPLIFIED OUTBOX - MATCHES PHARMACY PATTERN
 export const getCardOfficeReportsOutbox = async (req, res) => {
   try {
     const reports = await Report.findAll({
@@ -720,17 +710,9 @@ export const getCardOfficeReportsOutbox = async (req, res) => {
   }
 };
 
-// SEND REPORT WITH MULTER (UPDATED)
-// backend/controllers/cardofficeController.js
-
 export const sendCardOfficeReport = async (req, res) => {
   try {
     const { title, body, priority, recipient_id } = req.body;
-
-    console.log('=== Sending Card Office Report ===');
-    console.log('Title:', title);
-    console.log('Recipient ID:', recipient_id);
-    console.log('Files received:', req.files?.length || 0);
 
     const sender = await HospitalStaff.findByPk(req.user.id);
     if (!sender) {
@@ -744,20 +726,13 @@ export const sendCardOfficeReport = async (req, res) => {
 
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-    // ✅ FIXED: Save attachments using helper
-    let attachments = [];
-    if (req.files && req.files.length > 0) {
-      attachments = await saveAttachments(req.files, 'cardoffice');
-      console.log(`✅ ${attachments.length} attachment(s) processed and saved`);
-    }
-
     const report = await Report.create({
       report_number,
       title,
       body,
       priority: priority || 'medium',
       status: 'sent',
-      attachments: attachments, // ✅ Now saved to database
+      attachments: [], // No attachments
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -780,18 +755,13 @@ export const sendCardOfficeReport = async (req, res) => {
         report_id: report.id,
         title: report.title,
         priority: report.priority,
-        sender_name: formatFullName(sender),
-        has_attachments: attachments.length > 0,
-        attachments_count: attachments.length
+        sender_name: formatFullName(sender)
       });
     }
 
     res.status(201).json({ 
       success: true, 
-      report: {
-        ...report.toJSON(),
-        attachments_count: attachments.length
-      },
+      report,
       message: "Report sent successfully" 
     });
   } catch (error) {
@@ -800,7 +770,6 @@ export const sendCardOfficeReport = async (req, res) => {
   }
 };
 
-// ==================== FIXED REPLY TO REPORT ====================
 export const replyToCardOfficeReport = async (req, res) => {
   try {
     const { body } = req.body;
@@ -817,20 +786,13 @@ export const replyToCardOfficeReport = async (req, res) => {
 
     const report_number = `RPT-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-    // ✅ FIXED: Save reply attachments
-    let attachments = [];
-    if (req.file) {
-      attachments = await saveAttachments([req.file], 'cardoffice');
-      console.log(`✅ Reply attachment processed: ${attachments[0]?.name}`);
-    }
-
     const reply = await Report.create({
       report_number,
       title: `Re: ${parentReport.title}`,
       body,
       priority: parentReport.priority,
       status: 'sent',
-      attachments: attachments, // ✅ Now saved to database
+      attachments: [], // No attachments
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -859,8 +821,7 @@ export const replyToCardOfficeReport = async (req, res) => {
       io.to(`staff_${parentReport.sender_id}`).emit('report_reply_from_cardoffice', {
         report_id: reply.id,
         title: reply.title,
-        sender_name: formatFullName(sender),
-        has_attachments: attachments.length > 0
+        sender_name: formatFullName(sender)
       });
     }
 
@@ -870,7 +831,6 @@ export const replyToCardOfficeReport = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 export const markCardOfficeReportRead = async (req, res) => {
   try {
@@ -934,7 +894,6 @@ export const getMyScheduleCardOffice = async (req, res) => {
       };
     });
 
-    // Get today's schedules
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -947,7 +906,6 @@ export const getMyScheduleCardOffice = async (req, res) => {
     
     const todayHours = todaySchedules.reduce((sum, s) => sum + getShiftDisplayName(s.shift_type).hours, 0);
 
-    // Get this week's schedules
     const startOfWeek = new Date(today);
     const day = startOfWeek.getDay();
     const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
