@@ -6,7 +6,6 @@ import Patient from "../models/Patient.js";
 import KebeleAdmin from "../models/KebeleAdmin.js";
 import sequelize from "../config/database.js";
 import bcrypt from "bcryptjs";
-import { saveAttachments } from '../utils/attachmentHelper.js';
 import { Op } from "sequelize";
 
 // ==================== PROFILE MANAGEMENT ====================
@@ -306,12 +305,8 @@ export const deleteStaff = async (req, res) => {
   }
 };
 
-// ==================== REPORT MANAGEMENT WITH CHAT-LIKE REPLIES ====================
+// ==================== REPORT MANAGEMENT ====================
 
-// controllers/hospitalController.js - Add at top
-
-
-// ==================== FIXED SEND REPORT ====================
 export const sendReport = async (req, res) => {
   try {
     const { title, subject, body, priority, recipient_type, recipient_id } = req.body;
@@ -358,16 +353,9 @@ export const sendReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
     
-    // ✅ FIXED: Save attachments
-    let attachments = [];
-    if (req.files && req.files.length > 0) {
-      attachments = await saveAttachments(req.files, 'hospital');
-      console.log(`✅ ${attachments.length} attachment(s) saved for hospital report`);
-    }
-    
     const report = await Report.create({
       report_number, title, subject: subject || title, body, priority: priority || 'medium', status: 'sent',
-      attachments: attachments, // ✅ Save to database
+      attachments: [],
       sender_id: sender.id, sender_type: 'hospital',
       sender_first_name: sender.first_name, sender_middle_name: sender.middle_name, sender_last_name: sender.last_name,
       sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
@@ -388,9 +376,7 @@ export const sendReport = async (req, res) => {
         report_id: report.id, report_number: report.report_number, title: report.title,
         priority: report.priority, sender_name: `${sender.first_name} ${sender.last_name}`,
         sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
-        sent_at: report.sent_at, body_preview: body.substring(0, 100), body: body,
-        has_attachments: attachments.length > 0,
-        attachments_count: attachments.length
+        sent_at: report.sent_at, body_preview: body.substring(0, 100), body: body
       });
     }
     
@@ -401,15 +387,14 @@ export const sendReport = async (req, res) => {
   }
 };
 
-// ==================== FIXED REPLY TO REPORT ====================
 export const replyToReport = async (req, res) => {
   try {
     const { id } = req.params;
     const { body } = req.body;
     const admin = req.user;
     
-    if (!body && (!req.files || req.files.length === 0)) {
-      return res.status(400).json({ success: false, message: 'Reply message or attachment is required' });
+    if (!body) {
+      return res.status(400).json({ success: false, message: 'Reply message is required' });
     }
     
     const parentReport = await Report.findByPk(id);
@@ -443,17 +428,10 @@ export const replyToReport = async (req, res) => {
     const report_number = `RPT-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const threadId = parentReport.thread_id || parentReport.id;
     
-    // ✅ FIXED: Save reply attachments
-    let attachments = [];
-    if (req.files && req.files.length > 0) {
-      attachments = await saveAttachments(req.files, 'hospital');
-      console.log(`✅ ${attachments.length} attachment(s) saved for reply`);
-    }
-    
     const reply = await Report.create({
       report_number, title: `Re: ${parentReport.title}`, subject: parentReport.subject, body: body || '',
       priority: parentReport.priority, status: 'sent',
-      attachments: attachments, // ✅ Save to database
+      attachments: [],
       sender_id: admin.id, sender_type: 'hospital',
       sender_first_name: admin.first_name, sender_middle_name: admin.middle_name, sender_last_name: admin.last_name,
       sender_full_name: `${admin.first_name || ''} ${admin.middle_name || ''} ${admin.last_name || ''}`.trim(),
@@ -482,8 +460,7 @@ export const replyToReport = async (req, res) => {
           report_id: reply.id, parent_report_id: parentReport.id, report_number: reply.report_number,
           title: reply.title, priority: reply.priority, sender_name: `${admin.first_name} ${admin.last_name}`,
           sender_department: 'Hospital Admin', sent_at: reply.sent_at, body_preview: (body || '').substring(0, 100),
-          is_reply: true, has_attachments: attachments.length > 0,
-          attachments_count: attachments.length
+          is_reply: true
         });
       }
     }
@@ -526,7 +503,6 @@ export const getInbox = async (req, res) => {
   }
 };
 
-// Get conversation thread (chat-like view)
 export const getConversationThread = async (req, res) => {
   try {
     const { reportId } = req.params;
@@ -558,7 +534,6 @@ export const getConversationThread = async (req, res) => {
       order: [['sent_at', 'ASC']]
     });
     
-    // Mark messages as read
     await Report.update(
       { is_opened: true, opened_at: new Date(), opened_count: sequelize.literal('opened_count + 1') },
       { where: { recipient_id: req.user.id, recipient_type: 'hospital', thread_id: threadId, is_opened: false } }
@@ -650,7 +625,6 @@ export const getReportById = async (req, res) => {
   }
 };
 
-
 export const markReportAsRead = async (req, res) => {
   try {
     const report = await Report.findOne({
@@ -724,7 +698,7 @@ export const markAllNotificationsRead = async (req, res) => {
   }
 };
 
-// ==================== ENHANCED DASHBOARD STATS WITH MORE CARDS ====================
+// ==================== DASHBOARD STATS ====================
 
 export const getDashboardStats = async (req, res) => {
   try {
@@ -733,7 +707,6 @@ export const getDashboardStats = async (req, res) => {
     const outboxCount = await Report.count({ where: { sender_id: req.user.id, sender_type: 'hospital' } });
     const staffCount = await HospitalStaff.count({ where: { hospital_id: req.user.id, status: 'active' } });
     
-    // Additional stats for better dashboard
     const doctorCount = await HospitalStaff.count({ where: { hospital_id: req.user.id, department: 'Doctor', status: 'active' } });
     const nurseCount = await HospitalStaff.count({ where: { hospital_id: req.user.id, department: 'Nurse', status: 'active' } });
     const urgentReportsCount = await Report.count({ where: { recipient_id: req.user.id, recipient_type: 'hospital', priority: 'urgent', is_opened: false } });
@@ -757,7 +730,6 @@ export const getDashboardStats = async (req, res) => {
     const wardStats = {};
     staffByWard.forEach(item => { wardStats[item.ward] = parseInt(item.dataValues.count); });
     
-    // Get recent activity (last 5 reports)
     const recentReports = await Report.findAll({
       where: {
         [Op.or]: [
@@ -792,9 +764,8 @@ export const getDashboardStats = async (req, res) => {
   }
 };
 
-// ==================== ENHANCED REPORTING & ANALYTICS ====================
+// ==================== REPORTING & ANALYTICS ====================
 
-// Get report summary with filters (general and department-specific)
 export const getReportSummary = async (req, res) => {
   try {
     const { type = 'general', department, ward, startDate, endDate } = req.query;
@@ -808,7 +779,6 @@ export const getReportSummary = async (req, res) => {
     let results = {};
     
     if (type === 'general') {
-      // General statistics across all departments
       const totalPatients = await Patient.count({ where: { hospital_id: req.user.id } });
       const activeStaff = await HospitalStaff.count({ where: { hospital_id: req.user.id, status: 'active' } });
       const totalReports = await Report.count({
@@ -821,11 +791,9 @@ export const getReportSummary = async (req, res) => {
         }
       });
       
-      // Patient statistics by gender
       const malePatients = await Patient.count({ where: { hospital_id: req.user.id, gender: 'Male' } });
       const femalePatients = await Patient.count({ where: { hospital_id: req.user.id, gender: 'Female' } });
       
-      // Patient statistics by age group
       const patients = await Patient.findAll({ where: { hospital_id: req.user.id }, attributes: ['age'] });
       let pediatric = 0, adult = 0, geriatric = 0;
       patients.forEach(p => {
@@ -858,7 +826,6 @@ export const getReportSummary = async (req, res) => {
   }
 };
 
-// Helper: Get staff count by department
 async function getStaffCountByDepartment(hospitalId) {
   const staff = await HospitalStaff.findAll({
     where: { hospital_id: hospitalId, status: 'active' },
@@ -871,13 +838,10 @@ async function getStaffCountByDepartment(hospitalId) {
   return result;
 }
 
-// Helper: Get department-specific data
 async function getDepartmentSpecificData(hospitalId, department, ward, whereClause) {
   const staffInDept = await HospitalStaff.findAll({
     where: { hospital_id: hospitalId, department, status: 'active', ...(ward && { ward }) }
   });
-  
-  const staffIds = staffInDept.map(s => s.id);
   
   let specificData = {
     department,
@@ -891,20 +855,17 @@ async function getDepartmentSpecificData(hospitalId, department, ward, whereClau
     }))
   };
   
-  // Department-specific metrics
   switch(department) {
     case 'Doctor':
-      const doctors = staffInDept;
       specificData.metrics = {
-        totalDoctors: doctors.length,
+        totalDoctors: staffInDept.length,
         doctorsByWard: {}
       };
-      doctors.forEach(doc => {
+      staffInDept.forEach(doc => {
         const wardName = doc.ward || 'Unassigned';
         specificData.metrics.doctorsByWard[wardName] = (specificData.metrics.doctorsByWard[wardName] || 0) + 1;
       });
       break;
-      
     case 'Nurse':
       specificData.metrics = {
         totalNurses: staffInDept.length,
@@ -915,47 +876,13 @@ async function getDepartmentSpecificData(hospitalId, department, ward, whereClau
         specificData.metrics.nursesByWard[wardName] = (specificData.metrics.nursesByWard[wardName] || 0) + 1;
       });
       break;
-      
-    case 'Pharma':
-      specificData.metrics = {
-        totalPharmacists: staffInDept.length,
-        // Placeholder for drug inventory data
-        newDrugsAdded: 0,
-        expiredDrugsCount: 0,
-        lowStockAlert: false
-      };
-      break;
-      
-    case 'Lab':
-      specificData.metrics = {
-        totalLabTechs: staffInDept.length,
-        equipmentStatus: 'Operational',
-        pendingResults: 0,
-        severeResults: 0,
-        equipmentShortage: []
-      };
-      break;
-      
-    case 'Midwife':
-      specificData.metrics = {
-        totalMidwives: staffInDept.length,
-        deliveriesThisMonth: 0,
-        referrals: 0,
-        highRiskPregnancies: 0
-      };
-      break;
-      
     default:
-      specificData.metrics = {
-        totalStaff: staffInDept.length,
-        activeCount: staffInDept.filter(s => s.status === 'active').length
-      };
+      specificData.metrics = { totalStaff: staffInDept.length };
   }
   
   return specificData;
 }
 
-// Helper: Get detailed staff data for specific department
 async function getStaffDetailedData(hospitalId, department, ward) {
   const whereClause = { hospital_id: hospitalId, department, status: 'active' };
   if (ward && ward !== 'all') whereClause.ward = ward;
@@ -977,62 +904,15 @@ async function getStaffDetailedData(hospitalId, department, ward) {
     status: s.status
   }));
   
-  // Additional metrics based on department
-  let additionalMetrics = {};
-  
-  switch(department) {
-    case 'Doctor':
-      additionalMetrics = {
-        patientAssignments: await getPatientCountByDoctor(staff.map(s => s.id)),
-        surgeryCount: await getSurgeryCountByDoctor(staff.map(s => s.id)),
-        referralsCount: await getReferralCountByDoctor(staff.map(s => s.id))
-      };
-      break;
-    case 'Pharma':
-      additionalMetrics = {
-        newDrugs: await getNewDrugsList(hospitalId),
-        expiredDrugs: await getExpiredDrugsList(hospitalId),
-        lowStockItems: await getLowStockItems(hospitalId)
-      };
-      break;
-    case 'Lab':
-      additionalMetrics = {
-        pendingResults: await getPendingLabResults(hospitalId),
-        severeResults: await getSevereLabResults(hospitalId),
-        equipmentShortage: await getEquipmentShortage(hospitalId)
-      };
-      break;
-    case 'Midwife':
-      additionalMetrics = {
-        deliveries: await getDeliveryStats(hospitalId),
-        referrals: await getMidwifeReferrals(hospitalId)
-      };
-      break;
-  }
-  
   return {
     department,
     ward: ward || 'All',
     staff: formattedStaff,
     totalStaff: formattedStaff.length,
-    metrics: additionalMetrics
+    metrics: {}
   };
 }
 
-// Mock data functions (replace with actual database queries)
-async function getPatientCountByDoctor(doctorIds) { return {}; }
-async function getSurgeryCountByDoctor(doctorIds) { return {}; }
-async function getReferralCountByDoctor(doctorIds) { return {}; }
-async function getNewDrugsList(hospitalId) { return []; }
-async function getExpiredDrugsList(hospitalId) { return []; }
-async function getLowStockItems(hospitalId) { return []; }
-async function getPendingLabResults(hospitalId) { return 0; }
-async function getSevereLabResults(hospitalId) { return 0; }
-async function getEquipmentShortage(hospitalId) { return []; }
-async function getDeliveryStats(hospitalId) { return { total: 0, normal: 0, csection: 0 }; }
-async function getMidwifeReferrals(hospitalId) { return 0; }
-
-// Get all available report types for dropdown
 export const getReportTypes = async (req, res) => {
   try {
     const departments = await HospitalStaff.findAll({
@@ -1055,17 +935,9 @@ export const getReportTypes = async (req, res) => {
       },
       by_staff: {
         name: 'Staff Performance Report',
-        description: 'View individual staff member statistics and performance metrics',
+        description: 'View individual staff member statistics',
         departments: departmentList
       }
-    };
-    
-    // Add ward-based reports for applicable departments
-    const wards = ['OPD', 'EME', 'ANC'];
-    reportTypes.by_ward = {
-      name: 'Ward Report',
-      description: 'View statistics organized by ward',
-      wards
     };
     
     res.json({ success: true, reportTypes });
@@ -1075,7 +947,6 @@ export const getReportTypes = async (req, res) => {
   }
 };
 
-// Get staff list for dropdown selection
 export const getStaffListForReport = async (req, res) => {
   try {
     const { department } = req.query;
@@ -1103,7 +974,6 @@ export const getStaffListForReport = async (req, res) => {
   }
 };
 
-// Get staff-specific detailed report
 export const getStaffDetailedReport = async (req, res) => {
   try {
     const { staffId } = req.params;
@@ -1133,7 +1003,6 @@ export const getStaffDetailedReport = async (req, res) => {
     let metrics = {};
     
     if (includeMetrics === 'true') {
-      // Get reports sent/received by this staff
       const reportsSent = await Report.count({
         where: { sender_id: staff.id, sender_type: 'staff' }
       });
@@ -1147,26 +1016,6 @@ export const getStaffDetailedReport = async (req, res) => {
         reportsReceived,
         lastActive: staff.updatedAt
       };
-      
-      // Department-specific metrics
-      switch(staff.department) {
-        case 'Doctor':
-          metrics.patientsTreated = await getPatientCountByDoctor([staff.id]);
-          metrics.surgeriesPerformed = await getSurgeryCountByDoctor([staff.id]);
-          break;
-        case 'Pharma':
-          metrics.dispensedCount = 0;
-          metrics.pendingOrders = 0;
-          break;
-        case 'Lab':
-          metrics.testsCompleted = 0;
-          metrics.pendingTests = 0;
-          break;
-        case 'Midwife':
-          metrics.deliveriesAttended = 0;
-          metrics.currentPatients = 0;
-          break;
-      }
     }
     
     res.json({ success: true, staff: staffData, metrics });
@@ -1176,7 +1025,7 @@ export const getStaffDetailedReport = async (req, res) => {
   }
 };
 
-// ==================== ADDITIONAL DASHBOARD CARDS ENDPOINTS ====================
+// ==================== ADDITIONAL DASHBOARD CARDS ====================
 
 export const getPatientStatistics = async (req, res) => {
   try {
