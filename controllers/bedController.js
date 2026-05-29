@@ -140,75 +140,115 @@ export const getBedById = async (req, res) => {
 // @desc    Register new bed
 // @route   POST /api/beds/register
 // @access  Private
+// @desc    Register new bed
+// @route   POST /api/beds/register
+// @access  Private
 export const registerBed = async (req, res) => {
   try {
     const { number, ward, type, notes, hospital_id } = req.body;
-    // ✅ FIX: Use hospital_id from body or from user
-    const hospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
-    const staffId = req.user.id;
-
-    console.log('➕ Registering bed:', { number, ward, hospitalId });
-
-    if (!number || !ward || !hospitalId) {
+    
+    // ✅ FIX: Better hospital_id extraction with debugging
+    let hospitalId = hospital_id || req.user?.hospital_id || req.user?.hospitalId;
+    
+    console.log('📝 Register bed request:');
+    console.log('  - Body:', { number, ward, type, notes, hospital_id });
+    console.log('  - User object:', req.user);
+    console.log('  - Extracted hospitalId:', hospitalId);
+    
+    // ✅ FIX: Convert to integer if needed
+    if (hospitalId && typeof hospitalId === 'string') {
+      hospitalId = parseInt(hospitalId);
+    }
+    
+    // ✅ FIX: More flexible validation
+    if (!number) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Bed number, ward, and hospital_id are required' 
+        message: 'Bed number is required' 
       });
     }
-
+    
+    if (!ward) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Ward is required' 
+      });
+    }
+    
+    if (!hospitalId && !hospital_id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Hospital ID is required. Please ensure you are logged in.' 
+      });
+    }
+    
+    // Get staff ID (optional)
+    const staffId = req.user?.id || null;
+    
+    // ✅ FIX: Valid wards (case insensitive)
     const validWards = ['OPD', 'EME', 'ANC'];
-    if (!validWards.includes(ward)) {
+    const normalizedWard = ward.toUpperCase();
+    if (!validWards.includes(normalizedWard)) {
       return res.status(400).json({ 
         success: false, 
         message: `Invalid ward. Must be one of: ${validWards.join(', ')}` 
       });
     }
-
+    
+    // ✅ FIX: Check if bed already exists
     const existingBed = await Bed.findOne({
-      where: { hospital_id: hospitalId, ward, number }
+      where: { 
+        hospital_id: hospitalId, 
+        ward: normalizedWard, 
+        number: number 
+      }
     });
-
+    
     if (existingBed) {
       return res.status(400).json({ 
         success: false, 
-        message: `Bed ${number} already exists in ${ward} ward` 
+        message: `Bed ${number} already exists in ${normalizedWard} ward` 
       });
     }
-
+    
+    // ✅ FIX: Create the bed with correct values
     const newBed = await Bed.create({
       hospital_id: hospitalId,
-      number,
-      ward,
-      type: type || 'general',
+      number: number,
+      ward: normalizedWard,
+      type: type || 'general',  // ← Note: backend uses 'general' as default
       status: 'available',
       notes: notes || '',
       last_cleaned_at: new Date(),
       created_by: staffId
     });
-
-    console.log(`✅ Bed ${number} added to ${ward} ward`);
-
-    const io = req.app.get('io');
+    
+    console.log(`✅ Bed ${number} added to ${normalizedWard} ward`);
+    
+    // Emit socket event if available
+    const io = req.app?.get('io');
     if (io) {
       io.to(`hospital_${hospitalId}_bed_management`).emit('new_bed_added', {
         bed_id: newBed.id,
         bed_number: number,
-        ward: ward,
+        ward: normalizedWard,
         hospital_id: hospitalId
       });
     }
-
+    
     res.status(201).json({ 
       success: true, 
       message: `Bed ${number} registered successfully`, 
       bed: newBed 
     });
+    
   } catch (error) {
     console.error('❌ Error registering bed:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ 
       success: false, 
       message: error.message,
-      error: error.stack 
+      details: error.stack
     });
   }
 };

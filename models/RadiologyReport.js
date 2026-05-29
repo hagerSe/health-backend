@@ -85,6 +85,7 @@ const RadiologyReport = sequelize.define("RadiologyReport", {
     type: DataTypes.DATE,
     allowNull: true
   },
+
   submitted_at: {
     type: DataTypes.DATE,
     allowNull: true
@@ -92,7 +93,15 @@ const RadiologyReport = sequelize.define("RadiologyReport", {
   processed_by: {
     type: DataTypes.INTEGER,
     allowNull: true
-  }
+  },
+  // models/RadiologyReport.js - ADD THIS FIELD
+images: {
+  type: DataTypes.JSONB,
+  allowNull: true,
+  defaultValue: [],
+  comment: "Store array of image objects with URLs, keys, metadata"
+}
+
 }, {
   tableName: "radiology_reports",
   timestamps: true
