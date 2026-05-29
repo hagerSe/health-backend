@@ -273,7 +273,10 @@ export const uploadImages = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Request not found' });
     }
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+   const baseUrl = process.env.NODE_ENV === 'production' 
+  ? `https://${req.get('host')}`
+  : `${req.protocol}://${req.get('host')}`;
+  
     const newImages = [];
 
     if (req.files && req.files.length > 0) {
