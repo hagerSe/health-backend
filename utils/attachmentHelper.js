@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const saveAttachments = async (files, uploadDir = 'uploads/reports') => {
+export const saveAttachments = async (files, uploadDir = 'uploads/reports') => {
   if (!files || files.length === 0) return [];
   
   const savedAttachments = [];
@@ -22,5 +22,3 @@ const saveAttachments = async (files, uploadDir = 'uploads/reports') => {
   
   return savedAttachments;
 };
-
-export default saveAttachments;
