@@ -1,9 +1,7 @@
 // backend/routes/hrRoutes.js
 import express from 'express';
 import { protect, restrictTo } from '../middleware/auth.js';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { reportUpload } from '../middleware/upload.js';  // ✅ Use shared upload middleware
 import {
   getStaff,
   addStaff,
@@ -34,34 +32,8 @@ import {
 
 const router = express.Router();
 
-// Configure multer for file uploads
-const reportsDir = 'uploads/reports';
-if (!fs.existsSync(reportsDir)) {
-  fs.mkdirSync(reportsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, reportsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `hr-report-${uniqueSuffix}${path.extname(file.originalname)}`);
-  }
-});
-
-const upload = multer({ 
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type'));
-    }
-  }
-});
+// ✅ REMOVED local multer configuration (lines 10-40)
+// Now using reportUpload from ../middleware/upload.js
 
 // ==================== STAFF MANAGEMENT ====================
 router.get('/staff', protect, restrictTo('Human_Resource', 'hr', 'hospital_admin'), getStaff);
@@ -98,8 +70,24 @@ router.put('/change-password', protect, changeHRPassword);
 // ==================== REPORT MANAGEMENT ====================
 router.get('/reports/inbox', protect, getHRReportsInbox);
 router.get('/reports/outbox', protect, getHRReportsOutbox);
-router.post('/reports/send', protect, upload.array('attachments', 5), sendHRReport);
-router.post('/reports/:id/reply', protect, upload.single('attachment'), replyToHRReport);
+
+// ✅ UPDATED: Use reportUpload instead of local upload
+// ✅ Changed from upload.array('attachments', 5) to reportUpload.array('attachments', 10)
+// ✅ Changed from upload.single('attachment') to reportUpload.array('attachments', 10) for consistency
+router.post('/reports/send', 
+  protect, 
+  restrictTo('Human_Resource', 'hr', 'hospital_admin'), 
+  reportUpload.array('attachments', 10),  // ← Now using shared middleware
+  sendHRReport
+);
+
+router.post('/reports/:id/reply', 
+  protect, 
+  restrictTo('Human_Resource', 'hr', 'hospital_admin'), 
+  reportUpload.array('attachments', 10),  // ← Now using shared middleware (array, not single)
+  replyToHRReport
+);
+
 router.put('/reports/:id/read', protect, markHRReportRead);
 router.get('/hospital-admins', protect, getHospitalAdminsForHR);
 

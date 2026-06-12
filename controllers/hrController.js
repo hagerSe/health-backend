@@ -5,6 +5,7 @@ import HospitalStaff from '../models/HospitalStaff.js';
 import Schedule from '../models/Schedule.js';
 import LeaveRequest from '../models/LeaveRequest.js';
 import ShiftSwap from '../models/ShiftSwap.js';
+import { uploadToB2 } from '../Services/b2Upload.js';
 import Notification from '../models/Notification.js';
 import HospitalAdmin from '../models/HospitalAdmin.js';
 import Report from '../models/Report.js';
@@ -1410,6 +1411,8 @@ export const changeHRPassword = async (req, res) => {
 
 // @desc    Get HR reports inbox
 // @route   GET /api/hr/reports/inbox
+// @desc    Get HR reports inbox with attachments
+// @route   GET /api/hr/reports/inbox
 export const getHRReportsInbox = async (req, res) => {
   try {
     const { page = 1, limit = 10, search = '' } = req.query;
@@ -1445,9 +1448,26 @@ export const getHRReportsInbox = async (req, res) => {
       }
     });
     
+    // ✅ Parse attachments for each report
+    const formattedReports = reports.map(report => {
+      let attachments = [];
+      if (report.attachments) {
+        if (typeof report.attachments === 'string') {
+          try { attachments = JSON.parse(report.attachments); } catch(e) { attachments = []; }
+        } else if (Array.isArray(report.attachments)) {
+          attachments = report.attachments;
+        }
+      }
+      return {
+        ...report.toJSON(),
+        attachments,
+        attachments_count: attachments.length
+      };
+    });
+    
     res.json({
       success: true,
-      reports,
+      reports: formattedReports,
       unreadCount,
       totalCount,
       totalPages: Math.ceil(totalCount / limit),
@@ -1503,9 +1523,14 @@ export const getHRReportsOutbox = async (req, res) => {
 
 // @desc    Send HR report
 // @route   POST /api/hr/reports/send
+// @desc    Send HR report with B2 attachments
+// @route   POST /api/hr/reports/send
 export const sendHRReport = async (req, res) => {
   try {
     const { title, subject, body, priority, recipient_type, recipient_id } = req.body;
+
+    console.log("📝 Sending report from HR...");
+    console.log("   Files received:", req.files?.length || 0);
 
     const sender = await HospitalStaff.findByPk(req.user.id);
     
@@ -1527,6 +1552,29 @@ export const sendHRReport = async (req, res) => {
       return res.status(404).json({ success: false, message: "Recipient not found" });
     }
 
+    // ✅ Process attachments using B2
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
+      console.log(`📎 Processing ${req.files.length} attachments...`);
+      for (const file of req.files) {
+        try {
+          const uploadResult = await uploadToB2(file, sender.id);
+          attachments.push({
+            filename: uploadResult.originalName,
+            originalName: uploadResult.originalName,
+            mimeType: uploadResult.mimeType,
+            size: uploadResult.size,
+            url: uploadResult.url,
+            key: uploadResult.key,
+            expiresAt: uploadResult.expiresAt
+          });
+          console.log(`   ✅ Uploaded: ${uploadResult.originalName} -> Key: ${uploadResult.key}`);
+        } catch (uploadError) {
+          console.error(`   ❌ Failed to upload: ${file.originalname}`, uploadError.message);
+        }
+      }
+    }
+
     const date = new Date();
     const year = date.getFullYear();
     const lastReport = await Report.findOne({ order: [['id', 'DESC']], attributes: ['report_number'] });
@@ -1540,19 +1588,6 @@ export const sendHRReport = async (req, res) => {
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
 
-    // Process attachments
-    let attachments = [];
-    if (req.files && req.files.length > 0) {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      attachments = req.files.map(file => ({
-        name: file.originalname,
-        url: `${baseUrl}/uploads/reports/${file.filename}`,
-        type: file.mimetype,
-        size: file.size,
-        uploaded_at: new Date()
-      }));
-    }
-
     const report = await Report.create({
       report_number,
       title,
@@ -1560,7 +1595,7 @@ export const sendHRReport = async (req, res) => {
       body,
       priority: priority || 'medium',
       status: 'sent',
-      attachments,
+      attachments: attachments,  // ✅ Now using B2 attachments
       sender_id: sender.id,
       sender_type: 'staff',
       sender_first_name: sender.first_name,
@@ -1582,6 +1617,8 @@ export const sendHRReport = async (req, res) => {
       last_activity_at: new Date()
     });
 
+    console.log(`✅ Report created with ID: ${report.id}, Attachments: ${attachments.length}`);
+
     const io = req.app.get('io');
     if (io) {
       const adminRoom = `hospital_${recipient.id}_admin`;
@@ -1592,11 +1629,29 @@ export const sendHRReport = async (req, res) => {
         priority: report.priority,
         sender_name: formatFullName(sender),
         sender_department: sender.department,
-        sent_at: report.sent_at
+        sent_at: report.sent_at,
+        has_attachments: attachments.length > 0
       });
     }
 
-    res.status(201).json({ success: true, report, message: "Report sent successfully" });
+    res.status(201).json({ 
+      success: true, 
+      report: {
+        id: report.id,
+        report_number: report.report_number,
+        title: report.title,
+        attachments_count: attachments.length,
+        attachments: attachments.map(a => ({
+          filename: a.filename,
+          originalName: a.originalName,
+          mimeType: a.mimeType,
+          size: a.size,
+          url: a.url,
+          key: a.key
+        }))
+      }, 
+      message: "Report sent successfully" 
+    });
   } catch (error) {
     console.error("Send HR report error:", error);
     res.status(500).json({ success: false, message: error.message });
