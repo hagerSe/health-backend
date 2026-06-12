@@ -1660,13 +1660,27 @@ export const sendHRReport = async (req, res) => {
 
 // @desc    Reply to HR report
 // @route   POST /api/hr/reports/:id/reply
+// @desc    Reply to HR report with B2 attachments
+// @route   POST /api/hr/reports/:id/reply
 export const replyToHRReport = async (req, res) => {
   try {
     const { body } = req.body;
     const parentReport = await Report.findByPk(req.params.id);
 
+    console.log(`📝 Replying to report ${req.params.id} from HR...`);
+    console.log(`   Body: ${body?.substring(0, 100)}...`);
+    console.log(`   Files: ${req.files?.length || 0}`);
+
     if (!parentReport) {
       return res.status(404).json({ success: false, message: "Report not found" });
+    }
+
+    // Allow reply with attachment even if no text
+    if (!body && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Reply message or attachment is required' 
+      });
     }
 
     const isParticipant = (
@@ -1715,6 +1729,29 @@ export const replyToHRReport = async (req, res) => {
       }
     }
 
+    // ✅ Process attachments using B2 (from req.files array)
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
+      console.log(`📎 Processing ${req.files.length} attachments for reply...`);
+      for (const file of req.files) {
+        try {
+          const uploadResult = await uploadToB2(file, sender.id);
+          attachments.push({
+            filename: uploadResult.originalName,
+            originalName: uploadResult.originalName,
+            mimeType: uploadResult.mimeType,
+            size: uploadResult.size,
+            url: uploadResult.url,
+            key: uploadResult.key,
+            expiresAt: uploadResult.expiresAt
+          });
+          console.log(`   ✅ Uploaded: ${uploadResult.originalName} -> Key: ${uploadResult.key}`);
+        } catch (uploadError) {
+          console.error(`   ❌ Failed to upload: ${file.originalname}`, uploadError.message);
+        }
+      }
+    }
+
     const date = new Date();
     const year = date.getFullYear();
     const lastReport = await Report.findOne({ order: [['id', 'DESC']], attributes: ['report_number'] });
@@ -1727,29 +1764,16 @@ export const replyToHRReport = async (req, res) => {
     }
     
     const report_number = `RPT-${year}-${String(nextNumber).padStart(4, '0')}`;
-
-    let attachment = null;
-    if (req.file) {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      attachment = {
-        name: req.file.originalname,
-        url: `${baseUrl}/uploads/reports/${req.file.filename}`,
-        type: req.file.mimetype,
-        size: req.file.size,
-        uploaded_at: new Date()
-      };
-    }
-
-    const attachments = attachment ? [attachment] : [];
+    const threadId = parentReport.thread_id || parentReport.id;
 
     const reply = await Report.create({
       report_number,
       title: `Re: ${parentReport.title}`,
       subject: parentReport.subject,
-      body,
+      body: body || '',
       priority: parentReport.priority,
       status: 'sent',
-      attachments,
+      attachments: attachments,  // ✅ Now using B2 attachments
       
       sender_id: sender.id,
       sender_type: 'staff',
@@ -1772,10 +1796,12 @@ export const replyToHRReport = async (req, res) => {
       recipient_hospital_id: recipientHospitalId,
       
       parent_report_id: parentReport.id,
-      thread_id: parentReport.thread_id || parentReport.id,
+      thread_id: threadId,
       sent_at: new Date(),
       last_activity_at: new Date()
     });
+
+    console.log(`✅ Reply created with ID: ${reply.id}, Attachments: ${attachments.length}`);
 
     await parentReport.update({ 
       status: 'replied', 
@@ -1802,16 +1828,46 @@ export const replyToHRReport = async (req, res) => {
         sender_name: formatFullName(sender),
         sender_department: sender.department,
         sent_at: reply.sent_at,
-        body_preview: body.substring(0, 100),
+        body_preview: (body || '').substring(0, 100),
         body: body,
         has_attachments: attachments.length > 0,
         is_reply: true
       });
     }
 
+    // Create database notification
+    try {
+      await Notification.create({
+        recipient_id: recipientId,
+        recipient_type: recipientType,
+        title: `Reply to: ${parentReport.title}`,
+        message: `You have received a reply from ${formatFullName(sender)} (HR Department)`,
+        type: 'reply_received',
+        priority: parentReport.priority,
+        reference_id: reply.id,
+        is_read: false
+      });
+    } catch (notifError) {
+      console.warn("⚠️ Notification creation failed:", notifError.message);
+    }
+
     res.json({ 
       success: true, 
-      reply, 
+      reply: {
+        id: reply.id,
+        title: reply.title,
+        body: reply.body,
+        attachments: attachments.map(a => ({
+          filename: a.filename,
+          originalName: a.originalName,
+          mimeType: a.mimeType,
+          size: a.size,
+          url: a.url,
+          key: a.key
+        })),
+        attachments_count: attachments.length,
+        sent_at: reply.sent_at
+      }, 
       message: "Reply sent successfully" 
     });
   } catch (error) {
