@@ -1,4 +1,4 @@
-// backend/routes/triageRoutes.js
+
 import express from 'express';
 import { protect, restrictTo } from '../middleware/auth.js';
 import {

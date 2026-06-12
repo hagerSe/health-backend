@@ -393,8 +393,13 @@ export const replyToReport = async (req, res) => {
     const { body } = req.body;
     const admin = req.user;
     
-    if (!body) {
-      return res.status(400).json({ success: false, message: 'Reply message is required' });
+    console.log(`📝 Replying to report ${id} from hospital...`);
+    console.log(`   Body: ${body?.substring(0, 100)}...`);
+    console.log(`   Files: ${req.files?.length || 0}`);
+    
+    // Allow reply with attachment even if no body text
+    if (!body && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ success: false, message: 'Reply message or attachment is required' });
     }
     
     const parentReport = await Report.findByPk(id);
@@ -425,26 +430,78 @@ export const replyToReport = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Recipient not found' });
     }
     
+    // ============================================================
+    // ✅ FIXED: Process attachments BEFORE creating the reply
+    // ============================================================
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
+      console.log(`📎 Processing ${req.files.length} attachment(s) for reply...`);
+      
+      for (const file of req.files) {
+        try {
+          const uploadResult = await uploadToB2(file, admin.id);
+          attachments.push({
+            filename: uploadResult.originalName,
+            originalName: uploadResult.originalName,
+            mimeType: uploadResult.mimeType,
+            size: uploadResult.size,
+            url: uploadResult.url,
+            key: uploadResult.key,
+            expiresAt: uploadResult.expiresAt
+          });
+          console.log(`   ✅ Uploaded: ${uploadResult.originalName} -> Key: ${uploadResult.key}`);
+        } catch (uploadError) {
+          console.error(`   ❌ Failed to upload: ${file.originalname}`, uploadError.message);
+        }
+      }
+    }
+    
     const report_number = `RPT-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const threadId = parentReport.thread_id || parentReport.id;
     
+    // ============================================================
+    // ✅ FIXED: Use attachments variable instead of empty array
+    // ============================================================
     const reply = await Report.create({
-      report_number, title: `Re: ${parentReport.title}`, subject: parentReport.subject, body: body || '',
-      priority: parentReport.priority, status: 'sent',
-      attachments: [],
-      sender_id: admin.id, sender_type: 'hospital',
-      sender_first_name: admin.first_name, sender_middle_name: admin.middle_name, sender_last_name: admin.last_name,
+      report_number, 
+      title: `Re: ${parentReport.title}`, 
+      subject: parentReport.subject, 
+      body: body || '',
+      priority: parentReport.priority, 
+      status: 'sent',
+      attachments: attachments,  // ✅ FIXED: Now using actual attachments (not [])
+      sender_id: admin.id, 
+      sender_type: 'hospital',
+      sender_first_name: admin.first_name, 
+      sender_middle_name: admin.middle_name, 
+      sender_last_name: admin.last_name,
       sender_full_name: `${admin.first_name || ''} ${admin.middle_name || ''} ${admin.last_name || ''}`.trim(),
-      sender_title: `Hospital Admin - ${admin.hospital_name}`, sender_hospital: admin.hospital_name, sender_hospital_id: admin.id,
-      recipient_id: recipient.id, recipient_type: parentReport.sender_type,
-      recipient_first_name: recipient.first_name, recipient_middle_name: recipient.middle_name, recipient_last_name: recipient.last_name,
-      recipient_full_name: recipientFullName, recipient_hospital: recipient.hospital_name, recipient_hospital_id: recipient.hospital_id,
-      recipient_department: recipientDepartment, recipient_ward: recipientWard,
-      parent_report_id: parentReport.id, thread_id: threadId,
-      sent_at: new Date(), last_activity_at: new Date()
+      sender_title: `Hospital Admin - ${admin.hospital_name}`, 
+      sender_hospital: admin.hospital_name, 
+      sender_hospital_id: admin.id,
+      recipient_id: recipient.id, 
+      recipient_type: parentReport.sender_type,
+      recipient_first_name: recipient.first_name, 
+      recipient_middle_name: recipient.middle_name, 
+      recipient_last_name: recipient.last_name,
+      recipient_full_name: recipientFullName, 
+      recipient_hospital: recipient.hospital_name, 
+      recipient_hospital_id: recipient.hospital_id,
+      recipient_department: recipientDepartment, 
+      recipient_ward: recipientWard,
+      parent_report_id: parentReport.id, 
+      thread_id: threadId,
+      sent_at: new Date(), 
+      last_activity_at: new Date()
     });
     
-    await parentReport.update({ status: 'replied', last_activity_at: new Date(), reply_count: (parentReport.reply_count || 0) + 1 });
+    console.log(`✅ Reply created with ID: ${reply.id}, Attachments: ${attachments.length}`);
+    
+    await parentReport.update({ 
+      status: 'replied', 
+      last_activity_at: new Date(), 
+      reply_count: (parentReport.reply_count || 0) + 1 
+    });
     
     const io = req.app.get('io');
     if (io) {
@@ -457,15 +514,33 @@ export const replyToReport = async (req, res) => {
       
       if (recipientRoom) {
         io.to(recipientRoom).emit('report_reply_from_hospital', {
-          report_id: reply.id, parent_report_id: parentReport.id, report_number: reply.report_number,
-          title: reply.title, priority: reply.priority, sender_name: `${admin.first_name} ${admin.last_name}`,
-          sender_department: 'Hospital Admin', sent_at: reply.sent_at, body_preview: (body || '').substring(0, 100),
-          is_reply: true
+          report_id: reply.id, 
+          parent_report_id: parentReport.id, 
+          report_number: reply.report_number,
+          title: reply.title, 
+          priority: reply.priority, 
+          sender_name: `${admin.first_name} ${admin.last_name}`,
+          sender_department: 'Hospital Admin', 
+          sent_at: reply.sent_at, 
+          body_preview: (body || '').substring(0, 100),
+          is_reply: true,
+          has_attachments: attachments.length > 0
         });
       }
     }
     
-    res.json({ success: true, reply, message: "Reply sent successfully" });
+    res.json({ 
+      success: true, 
+      reply: {
+        id: reply.id,
+        title: reply.title,
+        body: reply.body,
+        attachments: attachments,
+        attachments_count: attachments.length,
+        sent_at: reply.sent_at
+      }, 
+      message: "Reply sent successfully" 
+    });
   } catch (error) {
     console.error('Reply to report error:', error);
     res.status(500).json({ success: false, message: error.message });
