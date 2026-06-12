@@ -396,14 +396,49 @@ export const deleteWoredaAdmin = async (req, res) => {
 export const sendReport = async (req, res) => {
   try {
     console.log("📝 Sending report from Zone...");
+    console.log("   Request body:", req.body);
     console.log("   Files received:", req.files?.length || 0);
     
     const { title, body, priority, recipient_type, recipient_id } = req.body;
     
+    // ============================================================
+    // ✅ ADD VALIDATION - FIX FOR "NO RECIPIENT SELECTED" ERROR
+    // ============================================================
+    if (!recipient_type) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please select a recipient type (regional or woreda)" 
+      });
+    }
+    
+    if (!recipient_id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please select a recipient from the list" 
+      });
+    }
+    
+    if (!title || title.trim() === "") {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please enter a title for the report" 
+      });
+    }
+    
+    if (!body || body.trim() === "") {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please enter the report content" 
+      });
+    }
+    
     const sender = await ZoneAdmin.findByPk(req.user.id);
     
     if (!sender) {
-      return res.status(404).json({ success: false, message: "Sender not found" });
+      return res.status(404).json({ 
+        success: false, 
+        message: "Sender not found" 
+      });
     }
     
     let recipient = null;
@@ -411,30 +446,57 @@ export const sendReport = async (req, res) => {
     let recipientRegionalId = null;
     let recipientWoredaId = null;
     
+    // ============================================================
+    // ✅ IMPROVED RECIPIENT LOOKUP WITH VALIDATION
+    // ============================================================
     if (recipient_type === 'regional') {
       recipient = await RegionalAdmin.findByPk(recipient_id);
       if (recipient) {
-        recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+        recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientRegionalId = recipient.id;
+        console.log(`✅ Found regional recipient: ${recipientFullName} (ID: ${recipient.id})`);
+      } else {
+        return res.status(404).json({ 
+          success: false, 
+          message: `Regional admin with ID ${recipient_id} not found. Please select a valid regional admin.` 
+        });
       }
     } else if (recipient_type === 'woreda') {
-      recipient = await WoredaAdmin.findByPk(recipient_id);
+      // ✅ Ensure woreda belongs to this zone
+      recipient = await WoredaAdmin.findOne({ 
+        where: { 
+          id: recipient_id,
+          zone_id: req.user.id,
+          status: 'active'
+        } 
+      });
       if (recipient) {
-        recipientFullName = `${recipient.first_name} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name}`.trim();
+        recipientFullName = `${recipient.first_name || ''} ${recipient.middle_name ? recipient.middle_name + ' ' : ''}${recipient.last_name || ''}`.trim();
         recipientWoredaId = recipient.id;
+        console.log(`✅ Found woreda recipient: ${recipientFullName} (ID: ${recipient.id})`);
+      } else {
+        return res.status(404).json({ 
+          success: false, 
+          message: `Woreda admin with ID ${recipient_id} not found under your zone. Please select a valid woreda admin.` 
+        });
       }
+    } else {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Invalid recipient type: ${recipient_type}. Must be 'regional' or 'woreda'` 
+      });
     }
     
-    if (!recipient) {
-      return res.status(404).json({ success: false, message: "Recipient not found" });
-    }
-    
+    // Generate unique report number
     const timestamp = Date.now();
     const randomString = Math.random().toString(36).substring(2, 8).toUpperCase();
     const report_number = `RPT-${timestamp}-${randomString}`;
     
     console.log(`📋 Generated unique report number: ${report_number}`);
     
+    // ============================================================
+    // ✅ PROCESS ATTACHMENTS
+    // ============================================================
     let attachments = [];
     if (req.files && req.files.length > 0) {
       console.log(`📎 Processing ${req.files.length} attachments...`);
@@ -458,11 +520,14 @@ export const sendReport = async (req, res) => {
       }
     }
     
+    // ============================================================
+    // ✅ CREATE REPORT
+    // ============================================================
     const report = await Report.create({
       report_number, 
-      title, 
-      subject: title, 
-      body, 
+      title: title.trim(), 
+      subject: title.trim(), 
+      body: body.trim(), 
       priority: priority || 'medium', 
       status: 'sent',
       attachments: attachments,
@@ -471,7 +536,7 @@ export const sendReport = async (req, res) => {
       sender_first_name: sender.first_name, 
       sender_middle_name: sender.middle_name, 
       sender_last_name: sender.last_name,
-      sender_full_name: `${sender.first_name} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name}`.trim(),
+      sender_full_name: `${sender.first_name || ''} ${sender.middle_name ? sender.middle_name + ' ' : ''}${sender.last_name || ''}`.trim(),
       sender_title: `Zone Admin - ${sender.zone_name}`,
       sender_zone: sender.zone_name,
       sender_zone_id: sender.id,
@@ -481,9 +546,9 @@ export const sendReport = async (req, res) => {
       recipient_middle_name: recipient.middle_name, 
       recipient_last_name: recipient.last_name,
       recipient_full_name: recipientFullName,
-      recipient_region: recipient_type === 'regional' ? recipient.region_name : '',
+      recipient_region: recipient_type === 'regional' ? (recipient.region_name || '') : '',
       recipient_region_id: recipientRegionalId,
-      recipient_woreda: recipient_type === 'woreda' ? recipient.woreda_name : '',
+      recipient_woreda: recipient_type === 'woreda' ? (recipient.woreda_name || '') : '',
       recipient_woreda_id: recipientWoredaId,
       sent_at: new Date(), 
       last_activity_at: new Date()
@@ -491,6 +556,9 @@ export const sendReport = async (req, res) => {
     
     console.log(`✅ Report created with ID: ${report.id}, Attachments: ${attachments.length}`);
     
+    // ============================================================
+    // ✅ SEND REAL-TIME NOTIFICATION VIA SOCKET.IO
+    // ============================================================
     const io = req.app.get('io');
     if (io) {
       let recipientRoom = '';
@@ -506,16 +574,40 @@ export const sendReport = async (req, res) => {
           report_number: report.report_number, 
           title: report.title,
           priority: report.priority, 
-          sender_name: `${sender.first_name} ${sender.last_name}`,
+          sender_name: `${sender.first_name || ''} ${sender.last_name || ''}`.trim(),
           sender_zone: sender.zone_name,
           sent_at: report.sent_at, 
           body_preview: body?.substring(0, 100), 
           body: body,
           has_attachments: attachments.length > 0
         });
+        console.log(`📡 Socket notification sent to room: ${recipientRoom}`);
       }
     }
     
+    // ============================================================
+    // ✅ CREATE DATABASE NOTIFICATION
+    // ============================================================
+    try {
+      await Notification.create({
+        recipient_id: recipient.id,
+        recipient_type: recipient_type,
+        title: `New Report from Zone: ${title}`,
+        message: `You have received a new report from ${sender.zone_name} zone`,
+        type: 'report_received',
+        priority: priority || 'medium',
+        reference_id: report.id,
+        is_read: false,
+        created_at: new Date()
+      });
+      console.log(`📧 Database notification created for recipient`);
+    } catch (notifError) {
+      console.warn("⚠️ Notification creation failed:", notifError.message);
+    }
+    
+    // ============================================================
+    // ✅ SUCCESS RESPONSE
+    // ============================================================
     res.status(201).json({ 
       success: true, 
       report: {
@@ -524,14 +616,18 @@ export const sendReport = async (req, res) => {
         title: report.title,
         priority: report.priority,
         attachments_count: attachments.length,
-        attachments: attachments
+        attachments: attachments,
+        sent_at: report.sent_at
       }, 
       message: "Report sent successfully" 
     });
     
   } catch (error) {
     console.error("Send report error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || "Failed to send report. Please try again." 
+    });
   }
 };
 
