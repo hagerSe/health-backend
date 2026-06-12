@@ -1,3 +1,4 @@
+// Services/b2Upload.js
 import {
   PutObjectCommand,
   DeleteObjectCommand,
@@ -119,9 +120,85 @@ export async function deleteFromB2(key) {
   }
 }
 
-// ✅ FIXED: Complete exports
+// ============================================================
+// ✅ ADD THESE MISSING FUNCTIONS
+// ============================================================
+
+/**
+ * Parse attachments from database storage
+ * @param {string|Array|Object} attachmentsData - Raw attachments data from database
+ * @returns {Array} Parsed attachments array
+ */
+export function parseAttachments(attachmentsData) {
+  if (!attachmentsData) return [];
+  
+  if (Array.isArray(attachmentsData)) {
+    return attachmentsData;
+  }
+  
+  if (typeof attachmentsData === 'string') {
+    try {
+      const parsed = JSON.parse(attachmentsData);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch(e) {
+      console.error("Error parsing attachments JSON:", e.message);
+      return [];
+    }
+  }
+  
+  if (typeof attachmentsData === 'object') {
+    return [attachmentsData];
+  }
+  
+  return [];
+}
+
+/**
+ * Format attachments for API response
+ * @param {Array} attachments - Raw attachments array
+ * @returns {Array} Formatted attachments with signed URLs
+ */
+export function formatAttachmentsForResponse(attachments) {
+  const parsed = parseAttachments(attachments);
+  
+  return parsed.map(att => ({
+    filename: att.filename || att.key?.split('/').pop() || 'file',
+    originalName: att.originalName || att.filename || 'Unknown',
+    mimeType: att.mimeType || att.mimetype || 'application/octet-stream',
+    size: att.size || 0,
+    url: att.url || null,
+    key: att.key || null,
+    expiresAt: att.expiresAt || null
+  }));
+}
+
+/**
+ * Check if report has attachments
+ * @param {Array} attachments - Attachments array
+ * @returns {boolean}
+ */
+export function hasAttachments(attachments) {
+  const parsed = parseAttachments(attachments);
+  return parsed.length > 0;
+}
+
+/**
+ * Get attachment count
+ * @param {Array} attachments - Attachments array
+ * @returns {number}
+ */
+export function getAttachmentCount(attachments) {
+  const parsed = parseAttachments(attachments);
+  return parsed.length;
+}
+
+// ✅ FIXED: Complete exports with all functions
 export default {
   uploadToB2,
   getFileSignedUrl,
-  deleteFromB2
+  deleteFromB2,
+  parseAttachments,
+  formatAttachmentsForResponse,
+  hasAttachments,
+  getAttachmentCount
 };
