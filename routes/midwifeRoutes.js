@@ -27,7 +27,10 @@ import {
   sendReport,
   markReportAsRead,
   replyToReport,
-  getHospitalAdmins
+  getHospitalAdmins,
+  getDoctors,
+  getPharmacyStaff,
+  getLabStaff
 } from '../controllers/midwifeController.js';
 
 const router = express.Router();
@@ -82,5 +85,10 @@ router.post('/reports/send', sendReport);
 router.put('/reports/:reportId/read', markReportAsRead);
 router.post('/reports/:reportId/reply', replyToReport);
 router.get('/hospital-admins', getHospitalAdmins);
+
+// Staff management (for sending reports)
+router.get('/doctors', getDoctors);
+router.get('/pharmacy-staff', getPharmacyStaff);
+router.get('/lab-staff', getLabStaff);
 
 export default router;

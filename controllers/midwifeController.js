@@ -1161,6 +1161,106 @@ export const changePassword = async (req, res) => {
   }
 };
 
+// ==================== STAFF MANAGEMENT (NEW) ====================
+
+// @desc    Get all doctors for midwife
+// @route   GET /api/midwife/doctors
+// @access  Private (Midwife)
+export const getDoctors = async (req, res) => {
+  try {
+    console.log('👨‍⚕️ Fetching doctors for hospital:', req.user.hospital_id);
+
+    const doctors = await HospitalStaff.findAll({
+      where: {
+        hospital_id: req.user.hospital_id,
+        role: 'doctor'
+      },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name', 'specialization', 'ward']
+    });
+    
+    const formattedDoctors = doctors.map(doc => ({
+      id: doc.id,
+      full_name: `${doc.first_name || ''} ${doc.middle_name || ''} ${doc.last_name || ''}`.trim().replace(/\s+/g, ' '),
+      specialization: doc.specialization || 'General',
+      ward: doc.ward || 'General'
+    }));
+    
+    console.log(`✅ Found ${formattedDoctors.length} doctors`);
+    
+    res.json({ 
+      success: true, 
+      doctors: formattedDoctors 
+    });
+  } catch (error) {
+    console.error("Get doctors error:", error);
+    res.json({ success: true, doctors: [] });
+  }
+};
+
+// @desc    Get pharmacy staff for midwife
+// @route   GET /api/midwife/pharmacy-staff
+// @access  Private (Midwife)
+export const getPharmacyStaff = async (req, res) => {
+  try {
+    console.log('💊 Fetching pharmacy staff for hospital:', req.user.hospital_id);
+
+    const pharmacyStaff = await HospitalStaff.findAll({
+      where: {
+        hospital_id: req.user.hospital_id,
+        role: 'pharmacist'
+      },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name']
+    });
+    
+    const formattedStaff = pharmacyStaff.map(staff => ({
+      id: staff.id,
+      full_name: `${staff.first_name || ''} ${staff.middle_name || ''} ${staff.last_name || ''}`.trim().replace(/\s+/g, ' ')
+    }));
+    
+    console.log(`✅ Found ${formattedStaff.length} pharmacy staff`);
+    
+    res.json({ 
+      success: true, 
+      staff: formattedStaff 
+    });
+  } catch (error) {
+    console.error("Get pharmacy staff error:", error);
+    res.json({ success: true, staff: [] });
+  }
+};
+
+// @desc    Get lab staff for midwife
+// @route   GET /api/midwife/lab-staff
+// @access  Private (Midwife)
+export const getLabStaff = async (req, res) => {
+  try {
+    console.log('🔬 Fetching lab staff for hospital:', req.user.hospital_id);
+
+    const labStaff = await HospitalStaff.findAll({
+      where: {
+        hospital_id: req.user.hospital_id,
+        role: 'lab_technician'
+      },
+      attributes: ['id', 'first_name', 'middle_name', 'last_name']
+    });
+    
+    const formattedStaff = labStaff.map(staff => ({
+      id: staff.id,
+      full_name: `${staff.first_name || ''} ${staff.middle_name || ''} ${staff.last_name || ''}`.trim().replace(/\s+/g, ' ')
+    }));
+    
+    console.log(`✅ Found ${formattedStaff.length} lab staff`);
+    
+    res.json({ 
+      success: true, 
+      staff: formattedStaff 
+    });
+  } catch (error) {
+    console.error("Get lab staff error:", error);
+    res.json({ success: true, staff: [] });
+  }
+};
+
 // ==================== REPORTS ====================
 
 // Helper function to generate unique report number
@@ -1390,18 +1490,11 @@ export const markReportAsRead = async (req, res) => {
 // @desc    Reply to report
 // @route   POST /api/midwife/reports/:reportId/reply
 // @access  Private (Midwife)
-// @desc    Reply to report
-// @route   POST /api/midwife/reports/:reportId/reply
-// @access  Private (Midwife)
-// @desc    Reply to report
-// @route   POST /api/midwife/reports/:reportId/reply
-// @access  Private (Midwife)
 export const replyToReport = async (req, res) => {
   try {
     const { reportId } = req.params;
     
     console.log('📨 Full request body:', req.body);
-    console.log('📨 Content-Type:', req.headers['content-type']);
     
     // Get body from either JSON or FormData
     let body = '';
@@ -1410,16 +1503,6 @@ export const replyToReport = async (req, res) => {
       body = req.body.body || req.body.message || '';
     }
     
-    // If still empty, try to parse raw body
-    if (!body && req.rawBody) {
-      try {
-        const parsed = JSON.parse(req.rawBody);
-        body = parsed.body || parsed.message || '';
-      } catch (e) {}
-    }
-    
-    console.log('📨 Extracted body:', body);
-
     if (!body) {
       return res.status(400).json({ 
         success: false, 
@@ -1427,10 +1510,6 @@ export const replyToReport = async (req, res) => {
       });
     }
 
-    const Report = (await import('../models/Report.js')).default;
-    const HospitalAdmin = (await import('../models/HospitalAdmin.js')).default;
-    const HospitalStaff = (await import('../models/HospitalStaff.js')).default;
-    
     const parentReport = await Report.findByPk(reportId);
 
     if (!parentReport) {
@@ -1483,18 +1562,7 @@ export const replyToReport = async (req, res) => {
       }
     }
 
-    // Generate unique report number
-    const generateUniqueReportNumber = async () => {
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const timestamp = Date.now();
-      const random = Math.random().toString(36).substring(2, 8);
-      return `RPT-${year}-${month}-${timestamp}-${random}`;
-    };
-    
     const report_number = await generateUniqueReportNumber();
-    console.log('📝 Generated report number for reply:', report_number);
 
     const reply = await Report.create({
       report_number,
@@ -1541,8 +1609,6 @@ export const replyToReport = async (req, res) => {
         recipientRoom = `hospital_${recipientHospitalId}_admin`;
       }
       
-      console.log(`📡 Emitting reply to room: ${recipientRoom}`);
-      
       io.to(recipientRoom).emit('report_reply_from_midwife', {
         report_id: reply.id,
         parent_report_id: parentReport.id,
@@ -1571,9 +1637,7 @@ export const replyToReport = async (req, res) => {
     });
   }
 };
-// @desc    Get hospital admins for midwife
-// @route   GET /api/midwife/hospital-admins
-// @access  Private (Midwife)
+
 // @desc    Get hospital admins for midwife
 // @route   GET /api/midwife/hospital-admins
 // @access  Private (Midwife)
