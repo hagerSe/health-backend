@@ -237,10 +237,13 @@ export const registerPatient = async (req, res) => {
 };
 
 // ==================== SEARCH PATIENTS ====================
+  // ==================== SEARCH PATIENTS ====================
 export const searchPatients = async (req, res) => {
   try {
     const { query } = req.query;
     const hospitalId = req.query.hospital_id;
+    
+    console.log(`🔍 Searching patients for hospital ${hospitalId} with query: "${query}"`);
     
     if (!hospitalId) {
       return res.status(400).json({ 
@@ -251,12 +254,82 @@ export const searchPatients = async (req, res) => {
       });
     }
     
-    // Implementation here
-    res.json({ success: true, patients: [], count: 0 });
+    if (!query || query.trim() === '') {
+      return res.json({ 
+        success: true, 
+        patients: [], 
+        count: 0,
+        message: 'Please enter a search term'
+      });
+    }
+    
+    const searchTerm = query.trim();
+    const parsedHospitalId = parseInt(hospitalId);
+    
+    // Build search conditions
+    const searchConditions = {
+      [Op.or]: [
+        { first_name: { [Op.iLike]: `%${searchTerm}%` } },
+        { middle_name: { [Op.iLike]: `%${searchTerm}%` } },
+        { last_name: { [Op.iLike]: `%${searchTerm}%` } },
+        { card_number: { [Op.iLike]: `%${searchTerm}%` } },
+        { phone: { [Op.iLike]: `%${searchTerm}%` } }
+      ],
+      hospital_id: parsedHospitalId
+    };
+    
+    // Also search by full name concatenation if possible
+    // This will find "John Doe" even if stored as separate fields
+    const searchWords = searchTerm.split(' ');
+    
+    if (searchWords.length > 1) {
+      // Try to match first_name + last_name combination
+      searchConditions[Op.or].push(
+        sequelize.where(
+          sequelize.fn('CONCAT', 
+            sequelize.col('first_name'), ' ', 
+            sequelize.col('last_name')
+          ),
+          { [Op.iLike]: `%${searchTerm}%` }
+        ),
+        sequelize.where(
+          sequelize.fn('CONCAT', 
+            sequelize.col('first_name'), ' ', 
+            sequelize.col('middle_name'), ' ', 
+            sequelize.col('last_name')
+          ),
+          { [Op.iLike]: `%${searchTerm}%` }
+        )
+      );
+    }
+    
+    const patients = await Patient.findAll({
+      where: searchConditions,
+      order: [
+        ['registered_at', 'DESC']
+      ],
+      limit: 50
+    });
+    
+    console.log(`✅ Found ${patients.length} patients matching "${searchTerm}"`);
+    
+    res.json({
+      success: true,
+      patients: patients,
+      count: patients.length,
+      search_term: searchTerm
+    });
+    
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Error searching patients:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      patients: [],
+      count: 0
+    });
   }
-}
+};
 
 // ==================== GET PATIENT BY ID ====================
 export const getPatientById = async (req, res) => {
